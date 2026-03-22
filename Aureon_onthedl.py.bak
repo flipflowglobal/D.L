@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import asyncio
+import os
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, Any
+
+import psutil
+import httpx
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+# Solana imports
+from solders.keypair import Keypair
+from solana.rpc.api import Client as SolanaClient
+# Ethereum imports
+from web3 import Web3
+
+# --- CONFIG ---
+HOST = "0.0.0.0"
+PORT = 8010
+MAX_WORKERS = 3
+DATA_DIR = Path.home() / ".aureon"
+DATA_DIR.mkdir(exist_ok=True)
+
+# --- MODELS ---
+class AgentConfig(BaseModel):
+    name: str
+    agent_type: str
+
+class TaskRequest(BaseModel):
+    agent_id: str
+    task_type: str
+    payload: Dict[str, Any] = {}
+
+# --- DEVICE INFO ---
+def device_info():
+    return {
+        "platform": os.uname().sysname,
+        "machine": os.uname().machine,
+        "python": f"{os.sys.version_info.major}.{os.sys.version_info.minor}.{os.sys.version_info.micro}"
+    }
+
+# --- AGENT ORCHESTRATOR ---
+class Agent:
+    def __init__(self, name: str, agent_type: str):
+        self.id = str(uuid.uuid4())[:8]
+        self.name = name
+        self.type = agent_type
+        self.status = "idle"
+        self.created = datetime.now()
+
+class Orchestrator:
+    def __init__(self):
+        self.agents: Dict[str, Agent] = {}
+        self.task_queue = asyncio.Queue()
+
+    async def worker(self):
+        while True:
+            task: TaskRequest = await self.task_queue.get()
+            await self.execute_task(task)
+            self.task_queue.task_done()
+
+    def create_agent(self, config: AgentConfig):
+        agent = Agent(config.name, config.agent_type)
+        self.agents[agent.id] = agent
+        return agent
+
+    def list_agents(self):
+        return [vars(a) for a in self.agents.values()]
+
+    async def execute_task(self, task: TaskRequest):
+        agent = self.agents.get(task.agent_id)
+        if not agent:
+            return
+        agent.status = "running"
+        try:
+            if task.task_type == "monitor":
+                result = monitor_system()
+            elif task.task_type == "blockchain":
+                result = await blockchain_task(task.payload)
+            else:
+                result = {"status": "unknown"}
+            print(f"TASK RESULT ({agent.name}):", result)
+        except Exception as e:
+            print(f"ERROR ({agent.name}):", e)
+        agent.status = "idle"
+
+# --- FUNCTIONS ---
+def monitor_system():
+    return {
+        "cpu_percent": psutil.cpu_percent(),
+        "memory_percent": psutil.virtual_memory().percent,
+        "timestamp": datetime.now().isoformat()
+    }
+
+async def blockchain_task(payload: Dict[str, Any]):
+    cmd = payload.get("command", "").lower()
+    result = {}
+    if cmd.startswith("new wallet solana"):
+        kp = Keypair()
+        result = {"address": str(kp.pubkey()), "secret": kp.secret_key().hex()}
+    elif cmd.startswith("check balance solana"):
+        client = SolanaClient("https://api.mainnet-beta.solana.com")
+        addr = payload.get("address")
+        if addr:
+            result = client.get_balance(addr)
+    elif cmd.startswith("new wallet ethereum"):
+        w3 = Web3(Web3.HTTPProvider("https://mainnet.infura.io/v3/YOUR_INFURA_KEY"))
+        account = w3.eth.account.create()
+        result = {"address": account.address, "private_key": account.key.hex()}
+    elif cmd.startswith("check balance ethereum"):
+        w3 = Web3(Web3.HTTPProvider("https://mainnet.infura.io/v3/YOUR_INFURA_KEY"))
+        addr = payload.get("address")
+        if addr:
+            result = {"balance": w3.eth.get_balance(addr)}
+    else:
+        result = {"status": "unknown command"}
+    return result
+
+# --- FASTAPI SERVER ---
+app = FastAPI(title="Aureon + OnTheDL")
+
+orchestrator = Orchestrator()
+
+@app.on_event("startup")
+async def startup():
+    for _ in range(MAX_WORKERS):
+        asyncio.create_task(orchestrator.worker())
+
+@app.get("/")
+def root():
+    return {"status": "running", "device": device_info()}
+
+@app.get("/agents")
+def list_agents():
+    return orchestrator.list_agents()
+
+@app.post("/agents")
+def create_agent(config: AgentConfig):
+    agent = orchestrator.create_agent(config)
+    return {"agent_id": agent.id, "name": agent.name, "type": agent.type}
+
+@app.post("/tasks")
+async def add_task(task: TaskRequest):
+    await orchestrator.task_queue.put(task)
+    return {"queued": True}
+
+if __name__ == "__main__":
+    import uvicorn
+    print("\nAUREON + OnTheDL SERVER STARTING\n")
+    uvicorn.run(app, host=HOST, port=PORT)
