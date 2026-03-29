@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+*.db
+DL_SYSTEM/data/
+DL_SYSTEM/logs/
+vault/wallet.json
+*.log
+*.pid
+nohup.out

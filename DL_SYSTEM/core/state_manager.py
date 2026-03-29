@@ -1,11 +1,12 @@
 import json
 import os
 
-STATE_FILE = "DL_SYSTEM/data/state.json"
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+STATE_FILE = os.path.join(_DATA_DIR, "state.json")
 
 class StateManager:
     def __init__(self):
-        os.makedirs("DL_SYSTEM/data", exist_ok=True)
+        os.makedirs(_DATA_DIR, exist_ok=True)
         if not os.path.exists(STATE_FILE):
             with open(STATE_FILE, "w") as f:
                 json.dump({"tasks": []}, f)

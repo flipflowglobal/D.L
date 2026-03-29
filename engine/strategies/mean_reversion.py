@@ -1,0 +1,27 @@
+from collections import deque
+
+
+class MeanReversionStrategy:
+    """
+    Generates BUY / SELL / HOLD signals based on price deviation from
+    a rolling mean.  Signals are produced only once the window is full.
+    """
+
+    def __init__(self, window: int = 10, threshold: float = 0.02):
+        self.prices: deque = deque(maxlen=window)
+        self.threshold = threshold
+
+    def signal(self, price: float) -> str:
+        self.prices.append(price)
+
+        if len(self.prices) < self.prices.maxlen:
+            return "HOLD"
+
+        mean = sum(self.prices) / len(self.prices)
+        deviation = (price - mean) / mean
+
+        if deviation < -self.threshold:
+            return "BUY"
+        if deviation > self.threshold:
+            return "SELL"
+        return "HOLD"

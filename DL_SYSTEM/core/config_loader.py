@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
-    RPC_URL = os.getenv("RPC_URL")
-    PRIVATE_KEY = os.getenv("WALLET_PRIVATE_KEY")
+    RPC_URL = os.getenv("RPC_URL") or os.getenv("ETH_RPC")
+    PRIVATE_KEY = os.getenv("PRIVATE_KEY")
 
     GALXE_EMAIL = os.getenv("GALXE_EMAIL")
     GALXE_PASSWORD = os.getenv("GALXE_PASSWORD")

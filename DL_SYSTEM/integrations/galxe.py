@@ -1,4 +1,4 @@
-from agents.web_agent import WebAgent
+from agents.web_agent_v2 import WebAgent
 from core.config_loader import Config
 import time
 
@@ -10,7 +10,7 @@ def run_galxe_task(task):
         agent.goto("https://galxe.com")
         time.sleep(3)
 
-        agent.login(Config.GALXE_EMAIL, Config.GALXE_PASSWORD)
+        agent.login_generic(Config.GALXE_EMAIL, Config.GALXE_PASSWORD)
         time.sleep(5)
 
         agent.goto("https://galxe.com/quests")
