@@ -2,9 +2,10 @@ import json
 from datetime import datetime
 import os
 
-LOG_FILE = "DL_SYSTEM/logs/logs.json"
+_LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
+LOG_FILE = os.path.join(_LOG_DIR, "logs.json")
 
-os.makedirs("DL_SYSTEM/logs", exist_ok=True)
+os.makedirs(_LOG_DIR, exist_ok=True)
 
 
 def log_event(event):
