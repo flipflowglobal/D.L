@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio anyio httpx
+
+      - name: Verify all imports
+        run: |
+          python -c "
+          import sys
+          modules = [
+              'engine.market_data',
+              'engine.portfolio',
+              'engine.risk_manager',
+              'engine.strategies.mean_reversion',
+              'engine.arbitrage.arbitrage_scanner',
+              'engine.dex.liquidity_monitor',
+              'engine.dex.uniswap_v3',
+              'engine.dex.sushiswap',
+              'engine.execution.executor',
+              'engine.execution.swap_executor',
+              'engine.execution.web3_executor',
+              'intelligence.memory',
+              'intelligence.autonomy',
+              'vault.wallet_config',
+              'vault.wallet_manager',
+              'tools',
+              'database',
+              'main',
+          ]
+          failed = []
+          for m in modules:
+              try:
+                  __import__(m)
+              except Exception as e:
+                  failed.append(f'{m}: {e}')
+          if failed:
+              print('IMPORT FAILURES:')
+              for f in failed:
+                  print(' ', f)
+              sys.exit(1)
+          print(f'All {len(modules)} modules import successfully')
+          "
+
+      - name: Run tests
+        run: pytest --tb=short -q
