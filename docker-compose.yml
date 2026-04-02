@@ -1,0 +1,43 @@
+services:
+
+  # ── FastAPI cognitive agent server ─────────────────────────────────────────
+  aureon-api:
+    build:
+      context: .
+      target: api
+    container_name: aureon-api
+    restart: unless-stopped
+    ports:
+      - "8010:8010"
+    env_file: .env
+    volumes:
+      # Persist wallet and memory database outside the container
+      - ./vault:/app/vault
+      - aureon-db:/app
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8010/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ── Trading bot ────────────────────────────────────────────────────────────
+  aureon-bot:
+    build:
+      context: .
+      target: bot
+    container_name: aureon-bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TRADE_MODE=${TRADE_MODE:-paper}
+    volumes:
+      - ./vault:/app/vault
+      - ./logs:/app/logs
+    depends_on:
+      aureon-api:
+        condition: service_healthy
+
+volumes:
+  aureon-db:

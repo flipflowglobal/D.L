@@ -59,7 +59,7 @@ def _patch_env(address: str, private_key: str) -> None:
     with open(ENV_FILE, "w") as f:
         f.writelines(new_lines)
 
-    print(f"  .env patched  → WALLET_ADDRESS + PRIVATE_KEY updated")
+    print("  .env patched  → WALLET_ADDRESS + PRIVATE_KEY updated")
 
 
 def _validate_key(raw: str) -> str:
@@ -80,12 +80,12 @@ def generate_wallet() -> None:
     address = acct.address
     private_key = acct.key.hex()[2:]  # strip leading 0x
 
-    print(f"\n  ┌─────────────────────────────────────────────────────────────┐")
-    print(f"  │  NEW WALLET GENERATED                                       │")
-    print(f"  │                                                             │")
+    print("\n  ┌─────────────────────────────────────────────────────────────┐")
+    print("  │  NEW WALLET GENERATED                                       │")
+    print("  │                                                             │")
     print(f"  │  Address     : {address}  │")
     print(f"  │  Private key : {private_key[:8]}…{private_key[-6:]}  (saved securely)    │")
-    print(f"  └─────────────────────────────────────────────────────────────┘")
+    print("  └─────────────────────────────────────────────────────────────┘")
     print()
     print("  IMPORTANT — back up your private key NOW and keep it offline.")
     print(f"  Full key: {private_key}")

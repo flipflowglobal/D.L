@@ -1,5 +1,4 @@
 import aiosqlite
-import json
 from pathlib import Path
 
 DB_PATH = Path("aureon_persistence.db")
