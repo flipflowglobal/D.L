@@ -6,6 +6,7 @@ httpx>=0.25.0
 # ── Blockchain ────────────────────────────────────────────────────────────────
 web3>=6.11.0
 eth-account>=0.10.0
+websockets<14.0
 
 # ── Solana (optional — comment out if not using Solana) ───────────────────────
 # solders>=0.18.0
