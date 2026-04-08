@@ -1,75 +1,67 @@
-# ~/OnTheDL/testnet_wallet_manager.py
-from web3 import Web3
+"""
+Testnet Wallet Manager
+──────────────────────
+Reads wallet credentials from environment variables or vault/wallet.json.
+Run `python setup_wallet.py` first to initialise the vault.
+"""
+
 import json
 import os
 
-# ---------------------------
-# TEST WALLET (safe, testnet)
-# ---------------------------
-PRIVATE_KEY = "07b5834f1ba400134671c6b301be3c71472ae801593a26154f787704fb7c17e9"
-WALLET_ADDRESS = "0x7FD7f50ed0D0625887072a95426F6A5d1e0BD3bF"
+from dotenv import load_dotenv
+from web3 import Web3
 
-# Vault file
-WALLET_FILE = "vault/wallet.json"
+load_dotenv()
 
-# ---------------------------
-# Initialize Vault
-# ---------------------------
-def initialize_wallet():
-    os.makedirs("vault", exist_ok=True)
-    if not os.path.exists(WALLET_FILE):
-        data = {
-            "address": WALLET_ADDRESS,
-            "private_key": PRIVATE_KEY
-        }
-        with open(WALLET_FILE, "w") as f:
-            json.dump(data, f)
-        print(f"Test wallet saved: {WALLET_ADDRESS}")
-    else:
-        print("Wallet file already exists.")
+WALLET_FILE = os.path.join(os.path.dirname(__file__), "vault", "wallet.json")
 
-# ---------------------------
-# Load Wallet
-# ---------------------------
-def load_wallet():
-    if not os.path.exists(WALLET_FILE):
-        initialize_wallet()
-    with open(WALLET_FILE, "r") as f:
-        return json.load(f)
 
-# ---------------------------
-# Send Transaction
-# ---------------------------
-def send_transaction(to_address, amount_eth, rpc_url):
+def load_wallet() -> dict:
+    """Load wallet from vault file, falling back to environment variables."""
+    if os.path.exists(WALLET_FILE):
+        with open(WALLET_FILE) as f:
+            return json.load(f)
+
+    address = os.getenv("WALLET_ADDRESS")
+    private_key = os.getenv("PRIVATE_KEY")
+
+    if not address or not private_key:
+        raise RuntimeError(
+            "No wallet found. Run `python setup_wallet.py` to create one, "
+            "or set WALLET_ADDRESS and PRIVATE_KEY in .env"
+        )
+    return {"address": address, "private_key": private_key}
+
+
+def send_transaction(to_address: str, amount_eth: float, rpc_url: str) -> str:
+    """Sign and broadcast an ETH transfer. Returns the hex tx hash."""
     w3 = Web3(Web3.HTTPProvider(rpc_url))
-    wallet = load_wallet()
-    from_addr = wallet["address"]
-    private_key = wallet["private_key"]
+    if not w3.is_connected():
+        raise ConnectionError(f"Cannot connect to RPC: {rpc_url}")
 
-    nonce = w3.eth.get_transaction_count(from_addr)
+    wallet = load_wallet()
+    nonce = w3.eth.get_transaction_count(wallet["address"])
     tx = {
         "nonce": nonce,
         "to": to_address,
         "value": w3.to_wei(amount_eth, "ether"),
         "gas": 21000,
         "gasPrice": w3.eth.gas_price,
+        "chainId": w3.eth.chain_id,
     }
-    signed_tx = w3.eth.account.sign_transaction(tx, private_key)
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+    signed = w3.eth.account.sign_transaction(tx, wallet["private_key"])
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     return tx_hash.hex()
 
-# ---------------------------
-# Main Test
-# ---------------------------
+
 if __name__ == "__main__":
-    initialize_wallet()
     wallet = load_wallet()
     print("Wallet address:", wallet["address"])
 
-    # Safe test transaction example (Goerli or Sepolia testnet)
-    RPC_URL = "https://goerli.infura.io/v3/YOUR_INFURA_PROJECT_ID"  # Replace with your testnet RPC
-    TO_ADDRESS = "0x000000000000000000000000000000000000dEaD"  # burn address, safe for testing
-    AMOUNT_ETH = 0.00001
-
-    tx_hash = send_transaction(TO_ADDRESS, AMOUNT_ETH, RPC_URL)
-    print("Test transaction sent. Hash:", tx_hash)
+    rpc_url = os.getenv("RPC_URL") or os.getenv("ETH_RPC")
+    if not rpc_url:
+        print("Set RPC_URL in .env to send a test transaction.")
+    else:
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        balance = w3.eth.get_balance(wallet["address"])
+        print(f"Balance: {w3.from_wei(balance, 'ether'):.6f} ETH")

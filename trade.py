@@ -120,7 +120,7 @@ def run(live: bool = False) -> None:
     signal.signal(signal.SIGINT,  _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    print(f"  Starting trading loop. Press Ctrl+C to stop.\n")
+    print("  Starting trading loop. Press Ctrl+C to stop.\n")
 
     while running:
         cycle += 1

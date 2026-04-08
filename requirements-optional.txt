@@ -1,0 +1,12 @@
+# ── Optional extras ───────────────────────────────────────────────────────────
+# Install these only if you need the specific features listed below.
+# These may fail on Android / Termux — skip them there.
+
+# System monitoring (aureon_server.py, aureon_onthedl.py)
+# NOT required for trade.py or main.py
+psutil>=5.9.0
+
+# Browser automation (DL_SYSTEM quest tasks only)
+# Requires additional setup: playwright install chromium
+# NOT available on Android
+playwright>=1.40.0

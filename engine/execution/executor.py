@@ -22,7 +22,7 @@ class Executor:
         if success:
             print(f"[Executor] BUY  {amount} ETH @ ${price:,.2f}")
         else:
-            print(f"[Executor] BUY  FAILED — insufficient USD balance")
+            print("[Executor] BUY  FAILED — insufficient USD balance")
         return success
 
     def execute_sell(self, portfolio: "Portfolio", price: float, amount: float) -> bool:
@@ -30,5 +30,5 @@ class Executor:
         if success:
             print(f"[Executor] SELL {amount} ETH @ ${price:,.2f}")
         else:
-            print(f"[Executor] SELL FAILED — insufficient ETH balance")
+            print("[Executor] SELL FAILED — insufficient ETH balance")
         return success

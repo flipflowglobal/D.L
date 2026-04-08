@@ -1,8 +1,21 @@
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-import random, time
+try:
+    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+    _PLAYWRIGHT = True
+except ImportError:
+    _PLAYWRIGHT = False
+
+import random
+import time
+
 
 class WebAgent:
     def __init__(self, headless=True):
+        if not _PLAYWRIGHT:
+            raise RuntimeError(
+                "playwright is not installed. "
+                "Run: pip install playwright && playwright install chromium\n"
+                "Not supported on Android/Termux."
+            )
         self.pw = sync_playwright().start()
         self.browser = self.pw.chromium.launch(headless=headless)
         self.context = self.browser.new_context(

@@ -1,7 +1,17 @@
-from playwright.sync_api import sync_playwright
+try:
+    from playwright.sync_api import sync_playwright
+    _PLAYWRIGHT = True
+except ImportError:
+    _PLAYWRIGHT = False
+
 
 class WebAgent:
     def __init__(self):
+        if not _PLAYWRIGHT:
+            raise RuntimeError(
+                "playwright is not installed. "
+                "Run: pip install playwright && playwright install chromium"
+            )
         self.pw = sync_playwright().start()
         self.browser = self.pw.chromium.launch(headless=True)
         self.page = self.browser.new_page()
