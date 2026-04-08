@@ -17,7 +17,7 @@ def log_event(event):
     try:
         with open(LOG_FILE, "r") as f:
             data = json.load(f)
-    except:
+    except (json.JSONDecodeError, OSError):
         data = []
 
     data.append(entry)

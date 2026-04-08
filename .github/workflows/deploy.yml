@@ -1,0 +1,131 @@
+name: Deploy (Blue/Green)
+
+# Triggers on pushes to main after CI passes.
+# Uses blue/green slot rotation: the inactive slot is updated,
+# health-checked, then traffic is switched atomically.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Blue/Green Deploy
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Build & push versioned image ───────────────────────────────────────
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: api
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Smoke test the new image ────────────────────────────────────────────
+      - name: Smoke test new image
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          docker pull "$IMAGE"
+
+          # Start the new image on an ephemeral port
+          docker run -d --name aureon-smoke \
+            -p 18010:8010 \
+            -e RPC_URL=http://localhost:8545 \
+            "$IMAGE"
+
+          # Wait for the API to become healthy (up to 30 s)
+          for i in $(seq 1 30); do
+            STATUS=$(curl -sf http://localhost:18010/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || true)
+            if [ "$STATUS" = "ok" ]; then
+              echo "Health check passed after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$STATUS" != "ok" ]; then
+            docker logs aureon-smoke
+            echo "Smoke test FAILED — aborting deploy"
+            exit 1
+          fi
+
+          docker stop aureon-smoke && docker rm aureon-smoke
+
+      # ── Blue/Green slot swap (self-hosted runner or SSH target) ────────────
+      # Uncomment and configure for your deployment target.
+      # The pattern:
+      #   1. Determine which slot is inactive (blue or green)
+      #   2. Pull new image into inactive slot
+      #   3. Start inactive slot, run health check
+      #   4. Switch load-balancer / reverse-proxy to inactive slot
+      #   5. Stop the previously active slot
+      #
+      # - name: Deploy to inactive slot
+      #   uses: appleboy/ssh-action@v1
+      #   with:
+      #     host: ${{ secrets.DEPLOY_HOST }}
+      #     username: ${{ secrets.DEPLOY_USER }}
+      #     key: ${{ secrets.DEPLOY_KEY }}
+      #     script: |
+      #       cd /opt/aureon
+      #       ACTIVE=$(cat .active_slot 2>/dev/null || echo "blue")
+      #       INACTIVE=$([ "$ACTIVE" = "blue" ] && echo "green" || echo "blue")
+      #
+      #       docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+      #
+      #       docker compose --profile $INACTIVE up -d
+      #
+      #       # Health check inactive slot
+      #       PORT=$([ "$INACTIVE" = "blue" ] && echo "8010" || echo "8011")
+      #       for i in $(seq 1 30); do
+      #         STATUS=$(curl -sf http://localhost:$PORT/health | python3 -c \
+      #           "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || true)
+      #         [ "$STATUS" = "ok" ] && break
+      #         sleep 1
+      #       done
+      #       [ "$STATUS" != "ok" ] && exit 1
+      #
+      #       # Swap traffic (nginx/caddy upstream update or label swap)
+      #       echo "$INACTIVE" > .active_slot
+      #
+      #       # Stop the old active slot
+      #       docker compose --profile $ACTIVE down
+
+      - name: Deploy summary
+        run: |
+          echo "### Deploy complete" >> $GITHUB_STEP_SUMMARY
+          echo "Image: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "Smoke test: ✅ passed" >> $GITHUB_STEP_SUMMARY

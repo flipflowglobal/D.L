@@ -13,10 +13,15 @@ class WalletConfig:
         if not rpc_url:
             raise ValueError("RPC_URL is not set")
 
-        self.private_key = private_key
+        # Strip 0x prefix if present — web3 accepts either form
+        key = private_key.strip()
+        if key.lower().startswith("0x"):
+            key = key[2:]
+
+        self.private_key = key
         self.rpc_url = rpc_url
         self.w3 = Web3(Web3.HTTPProvider(rpc_url))
-        self.account = self.w3.eth.account.from_key(private_key)
+        self.account = self.w3.eth.account.from_key(key)
 
     @property
     def address(self) -> str:
