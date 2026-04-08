@@ -1,14 +1,23 @@
 import asyncio
+import os
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
 from enum import Enum
 
-import psutil
-import httpx
-from solders.keypair import Keypair
-from solana.rpc.api import Client as SolanaClient
+from dotenv import load_dotenv
+
+load_dotenv(".env")
+
+try:
+    from solders.keypair import Keypair
+    from solana.rpc.api import Client as SolanaClient
+    _SOLANA = True
+except ImportError:
+    _SOLANA = False
+
 from web3 import Web3
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -17,9 +26,9 @@ from pydantic import BaseModel
 DATA_DIR = Path.home() / ".aureon_blockchain"
 DATA_DIR.mkdir(exist_ok=True)
 
-SOLANA_RPC = "https://api.mainnet-beta.solana.com"
-ETH_RPC = "https://mainnet.infura.io/v3/YOUR_INFURA_KEY"  # replace with your Infura/Alchemy key
-BSC_RPC = "https://bsc-dataseed.binance.org/"
+SOLANA_RPC = os.getenv("SOLANA_RPC", "https://api.mainnet-beta.solana.com")
+ETH_RPC = os.getenv("RPC_URL") or os.getenv("ETH_RPC")
+BSC_RPC = os.getenv("BSC_RPC", "https://bsc-dataseed.binance.org/")
 
 # ---------------- AGENT SETUP ----------------
 class AgentType(str, Enum):
@@ -75,18 +84,17 @@ class Orchestrator:
                 result = await blockchain_task(task.payload)
             else:
                 result = {"status": "unknown"}
-
             print("TASK RESULT:", result)
         except Exception as e:
             print("ERROR:", e)
         agent.status = AgentStatus.IDLE
 
 # ---------------- BLOCKCHAIN FUNCTIONS ----------------
-solana_client = SolanaClient(SOLANA_RPC)
-eth_client = Web3(Web3.HTTPProvider(ETH_RPC))
+solana_client = SolanaClient(SOLANA_RPC) if _SOLANA else None
+eth_client = Web3(Web3.HTTPProvider(ETH_RPC)) if ETH_RPC else None
 bsc_client = Web3(Web3.HTTPProvider(BSC_RPC))
 
-wallets = {"solana": {}, "ethereum": {}, "bsc": {}}
+wallets: Dict[str, dict] = {"solana": {}, "ethereum": {}, "bsc": {}}
 
 async def blockchain_task(payload: Dict[str, Any]):
     command = payload.get("command", "")
@@ -94,38 +102,53 @@ async def blockchain_task(payload: Dict[str, Any]):
 
     if command == "new_wallet":
         if chain == "solana":
+            if not _SOLANA:
+                return {"error": "solana/solders not installed"}
             keypair = Keypair()
-            wallets["solana"][keypair.pubkey().to_base58()] = keypair.to_bytes()
-            return {"address": keypair.pubkey().to_base58(), "private_key_hex": keypair.to_bytes().hex()}
-
-        elif chain in ["ethereum", "bsc"]:
+            wallets["solana"][str(keypair.pubkey())] = keypair.to_bytes().hex()
+            return {"address": str(keypair.pubkey()), "private_key_hex": keypair.to_bytes().hex()}
+        elif chain in ("ethereum", "bsc"):
             w3 = eth_client if chain == "ethereum" else bsc_client
+            if w3 is None:
+                return {"error": f"RPC not configured for {chain}"}
             acct = w3.eth.account.create()
             wallets[chain][acct.address] = acct.key.hex()
             return {"address": acct.address, "private_key_hex": acct.key.hex()}
 
     elif command == "check_balance":
         if chain == "solana":
+            if not _SOLANA or solana_client is None:
+                return {"error": "solana not available"}
             address = payload.get("address")
             res = solana_client.get_balance(address)
-            return {"address": address, "balance": res["result"]["value"]}
-
-        elif chain in ["ethereum", "bsc"]:
+            return {"address": address, "balance_lamports": res.value}
+        elif chain in ("ethereum", "bsc"):
             w3 = eth_client if chain == "ethereum" else bsc_client
+            if w3 is None:
+                return {"error": f"RPC not configured for {chain}"}
             address = payload.get("address")
             balance = w3.eth.get_balance(address)
-            return {"address": address, "balance_wei": balance, "balance_eth": w3.from_wei(balance, "ether")}
+            return {
+                "address": address,
+                "balance_wei": balance,
+                "balance_eth": float(w3.from_wei(balance, "ether")),
+            }
 
     return {"status": "unknown command or chain"}
 
 # ---------------- FASTAPI ----------------
 orchestrator = Orchestrator()
-app = FastAPI(title="Aureon Blockchain System")
 
-@app.on_event("startup")
-async def startup():
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     for _ in range(2):
         asyncio.create_task(orchestrator.worker())
+    yield
+
+
+app = FastAPI(title="Aureon Blockchain System", lifespan=lifespan)
+
 
 @app.get("/")
 def root():

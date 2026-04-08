@@ -1,61 +1,101 @@
 #!/usr/bin/env python3
 """
-Aave Flash Loan Executor — Safe Test Version
-- Borrow WETH on Sepolia testnet
-- Profit stored in your wallet
-- Dry-run safe by default
+Aave V3 Flash Loan Executor — Sepolia Testnet
+Borrows WETH via flashLoanSimple, dry-run by default.
+Set DRY_RUN=false in .env to broadcast the transaction.
+
+NOTE: For a real flash loan you must deploy a receiver contract that
+implements IFlashLoanSimpleReceiver and repays the loan + premium
+(0.05 %) inside executeOperation().  This script encodes the call
+and signs it; in dry-run mode it only prints the signed bytes.
 """
 
+import os
 from web3 import Web3
 from dotenv import load_dotenv
-import os
 
 load_dotenv(".env")
 
 # --- Configuration ---
 RPC_URL = os.getenv("RPC_URL")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
-PROFIT_WALLET = "0x64DC101bb50C692b05080595B40D95f93c878A44"  # Your wallet
-LENDING_POOL_ADDRESS = "0x2f6b6ACBdF3F7A530f8b32eAe7c420F41C5c9f82"  # Sepolia Aave v3
-DRY_RUN = True  # Change to False to actually send TX
+# PROFIT_WALLET defaults to the executor's own address if not set explicitly
+PROFIT_WALLET = os.getenv("PROFIT_WALLET")
+DRY_RUN = os.getenv("DRY_RUN", "true").lower() not in ("false", "0", "no")
+
+# --- Aave V3 Sepolia addresses (official) ---
+AAVE_POOL_ADDRESS = Web3.to_checksum_address(
+    os.getenv("AAVE_POOL_ADDRESS", "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951")
+)
+WETH_ADDRESS = Web3.to_checksum_address(
+    os.getenv("WETH_ADDRESS", "0xC558DBdd856501FCd9aaF1E62eae57A9F0629a3c")
+)
+
+# --- Aave V3 Pool ABI (minimal — flashLoanSimple only) ---
+AAVE_POOL_ABI = [
+    {
+        "inputs": [
+            {"internalType": "address", "name": "receiverAddress", "type": "address"},
+            {"internalType": "address", "name": "asset", "type": "address"},
+            {"internalType": "uint256", "name": "amount", "type": "uint256"},
+            {"internalType": "bytes", "name": "params", "type": "bytes"},
+            {"internalType": "uint16", "name": "referralCode", "type": "uint16"},
+        ],
+        "name": "flashLoanSimple",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    }
+]
+
+if not RPC_URL:
+    raise RuntimeError("RPC_URL not set in .env")
+if not PRIVATE_KEY:
+    raise RuntimeError("PRIVATE_KEY not set in .env")
 
 # --- Connect Web3 ---
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
-
 if not w3.is_connected():
-    raise Exception("Web3 connection failed")
+    raise RuntimeError("Web3 connection failed — check RPC_URL")
 
 account = w3.eth.account.from_key(PRIVATE_KEY)
-print("Connected to Sepolia:", w3.is_connected())
-print("Executor Wallet:", account.address)
-print("Chain ID:", w3.eth.chain_id)
+profit_wallet = Web3.to_checksum_address(PROFIT_WALLET or account.address)
 
-# --- Convert lending pool to checksummed address ---
-LENDING_POOL_ADDRESS = w3.to_checksum_address(LENDING_POOL_ADDRESS)
+print("Connected to network, chain ID:", w3.eth.chain_id)
+print("Executor wallet :", account.address)
+print("Profit wallet   :", profit_wallet)
+print("Dry run         :", DRY_RUN)
 
-# --- Example Flash Loan Transaction (Simplified) ---
-# WARNING: This is a template; real flash loan execution requires smart contract interaction
-nonce = w3.eth.get_transaction_count(account.address)
-tx = {
+# --- Borrow parameters ---
+BORROW_AMOUNT = w3.to_wei(float(os.getenv("FLASH_LOAN_AMOUNT_ETH", "0.01")), "ether")
+
+pool = w3.eth.contract(address=AAVE_POOL_ADDRESS, abi=AAVE_POOL_ABI)
+
+# --- Encode flash loan call ---
+# receiverAddress = profit_wallet (must implement IFlashLoanSimpleReceiver on-chain)
+tx = pool.functions.flashLoanSimple(
+    profit_wallet,   # receiverAddress
+    WETH_ADDRESS,    # asset
+    BORROW_AMOUNT,   # amount
+    b"",             # params (passed through to executeOperation)
+    0,               # referralCode
+).build_transaction({
     "from": account.address,
-    "to": LENDING_POOL_ADDRESS,
-    "value": 0,
+    "nonce": w3.eth.get_transaction_count(account.address),
     "gas": 500_000,
-    "gasPrice": w3.to_wei("10", "gwei"),
-    "nonce": nonce,
+    "gasPrice": w3.eth.gas_price,
     "chainId": w3.eth.chain_id,
-    "data": b"",  # Replace with encoded flash loan call if using a smart contract
-}
+})
 
-# --- Sign transaction ---
 signed_tx = account.sign_transaction(tx)
-print("TX ready. Dry run mode:", DRY_RUN)
+print(f"\nFlash loan TX encoded ({len(signed_tx.raw_transaction)} bytes)")
+print("TX nonce      :", tx["nonce"])
+print("Gas price     :", w3.from_wei(tx["gasPrice"], "gwei"), "gwei")
 
-# --- Send transaction ---
 if not DRY_RUN:
     tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    print("Transaction broadcasted")
+    print("\nTransaction broadcasted!")
     print("TX HASH:", tx_hash.hex())
 else:
-    print("Dry run — TX not sent")
-    print("Signed TX raw data:", signed_tx.raw_transaction.hex())
+    print("\nDry run — TX not sent")
+    print("Signed TX (hex):", signed_tx.raw_transaction.hex()[:80], "...")

@@ -115,4 +115,4 @@ async def get_memory(agent_id: str, key: str):
 
 @app.get("/health")
 async def health():
-    return {"health": "ok"}
+    return {"status": "ok"}
