@@ -46,8 +46,17 @@ info "Virtual environment active"
 
 # ── 3. Install dependencies ───────────────────────────────────────────────
 
-info "Installing dependencies …"
+info "Installing core dependencies …"
 pip install --quiet -r requirements.txt
+
+# Install optional extras (psutil, playwright) — skip on Android/Termux
+if [[ "$(uname -o 2>/dev/null)" != "Android" ]]; then
+    info "Installing optional dependencies (psutil, playwright) …"
+    pip install --quiet -r requirements-optional.txt || warn "Optional deps skipped (non-critical)"
+else
+    warn "Android detected — skipping optional deps (psutil, playwright)"
+fi
+
 info "Dependencies installed"
 
 # ── 4. Create required directories ───────────────────────────────────────

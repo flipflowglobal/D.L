@@ -1,4 +1,4 @@
-# ── Core ──────────────────────────────────────────────────────────────────────
+# ── Core (required, works on Linux / macOS / Windows / Android Termux) ────────
 python-dotenv>=1.0.0
 requests>=2.31.0
 httpx>=0.25.0
@@ -8,10 +8,6 @@ web3>=6.11.0
 eth-account>=0.10.0
 websockets<14.0
 
-# ── Solana (optional — comment out if not using Solana) ───────────────────────
-# solders>=0.18.0
-# solana>=0.30.0
-
 # ── Async / persistence ───────────────────────────────────────────────────────
 aiosqlite>=0.19.0
 
@@ -19,12 +15,6 @@ aiosqlite>=0.19.0
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic>=2.0.0
-
-# ── System monitoring ─────────────────────────────────────────────────────────
-psutil>=5.9.0
-
-# ── Browser automation (DL_SYSTEM quest tasks — optional) ────────────────────
-playwright>=1.40.0
 
 # ── Testing ───────────────────────────────────────────────────────────────────
 pytest>=8.0.0
