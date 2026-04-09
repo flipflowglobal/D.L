@@ -1,0 +1,61 @@
+[package]
+name        = "dex-oracle"
+version     = "1.0.0"
+edition     = "2021"
+description = "AUREON DEX price oracle — parallel Uniswap V3 + SushiSwap queries via alloy-rs"
+authors     = ["AUREON"]
+
+[[bin]]
+name = "dex-oracle"
+path = "src/main.rs"
+
+[dependencies]
+# ── Async runtime ─────────────────────────────────────────────────────────────
+tokio = { version = "1", features = ["full"] }
+
+# ── HTTP server (Axum) ────────────────────────────────────────────────────────
+axum          = { version = "0.7", features = ["macros"] }
+tower-http    = { version = "0.5", features = ["cors", "trace"] }
+tower         = "0.4"
+
+# ── Ethereum (alloy) ─────────────────────────────────────────────────────────
+alloy = { version = "1", features = [
+    "providers",
+    "reqwest",
+    "sol-types",
+    "contract",
+    "network",
+    "rpc-types",
+] }
+url = "2"
+
+# ── HTTP client ───────────────────────────────────────────────────────────────
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+
+# ── Serialization ─────────────────────────────────────────────────────────────
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+dotenv = "0.15"
+
+# ── Error handling ────────────────────────────────────────────────────────────
+anyhow  = "1"
+thiserror = "1"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# ── Cache / time ─────────────────────────────────────────────────────────────
+tokio-util = { version = "0.7", features = ["time"] }
+
+[profile.release]
+opt-level    = 3
+lto          = "fat"        # whole-program link-time optimisation
+codegen-units = 1           # single codegen unit for maximum optimisation
+panic        = "abort"      # smaller binary, faster startup
+strip        = true         # strip debug symbols
