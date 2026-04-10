@@ -1,8 +1,10 @@
 """
-SushiSwap V2 on-chain price reader (Ethereum Mainnet).
+engine/dex/sushiswap.py — SushiSwap V2 on-chain price reader (Ethereum Mainnet).
 
-SushiSwap V2 is a Uniswap V2 fork — prices are read from the pair reserves
-via getAmountsOut() on the SushiSwap Router, which requires no gas.
+Performance improvements over original:
+  - get_eth_price_usdc_async(): non-blocking via run_in_executor so it can be
+    gathered concurrently with the Uniswap V3 queries.
+  - Persistent HTTPProvider with connection pooling.
 
 Mainnet addresses:
   SushiSwap Router V2 : 0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F
@@ -10,21 +12,27 @@ Mainnet addresses:
   USDC                : 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
 """
 
-from web3 import Web3
+from __future__ import annotations
+
+import asyncio
 from typing import Optional
+
+from web3 import Web3
 
 SUSHI_ROUTER = "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 
+_ONE_ETH_WEI = 10 ** 18
+
 ROUTER_ABI = [
     {
-        "name": "getAmountsOut",
-        "type": "function",
+        "name":            "getAmountsOut",
+        "type":            "function",
         "stateMutability": "view",
         "inputs": [
-            {"name": "amountIn",  "type": "uint256"},
-            {"name": "path",      "type": "address[]"},
+            {"name": "amountIn", "type": "uint256"},
+            {"name": "path",     "type": "address[]"},
         ],
         "outputs": [{"name": "amounts", "type": "uint256[]"}],
     }
@@ -33,12 +41,17 @@ ROUTER_ABI = [
 
 class SushiSwap:
     """
-    Queries SushiSwap V2 Router for spot prices using getAmountsOut().
+    Queries SushiSwap V2 Router for spot prices via getAmountsOut().
     All calls are view-only — no gas cost.
     """
 
     def __init__(self, rpc_url: str):
-        self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+        self.w3 = Web3(Web3.HTTPProvider(
+            rpc_url,
+            request_kwargs={"timeout": 10},
+        ))
+        self._weth = Web3.to_checksum_address(WETH_ADDRESS)
+        self._usdc = Web3.to_checksum_address(USDC_ADDRESS)
         self.router = self.w3.eth.contract(
             address=Web3.to_checksum_address(SUSHI_ROUTER),
             abi=ROUTER_ABI,
@@ -47,22 +60,21 @@ class SushiSwap:
     def is_connected(self) -> bool:
         return self.w3.is_connected()
 
+    # ── synchronous ───────────────────────────────────────────────────────────
+
     def get_eth_price_usdc(self) -> Optional[float]:
         """
         Return ETH/USD price from the SushiSwap WETH→USDC pair.
         Simulates selling 1 WETH and reads the USDC output.
         """
         try:
-            amount_in = self.w3.to_wei(1, "ether")  # 1 WETH (18 decimals)
-            path = [
-                Web3.to_checksum_address(WETH_ADDRESS),
-                Web3.to_checksum_address(USDC_ADDRESS),
-            ]
-            amounts = self.router.functions.getAmountsOut(amount_in, path).call()
-            # amounts[1] is USDC out (6 decimals)
-            return amounts[1] / 1e6
-        except Exception as e:
-            print(f"[SushiSwap] Price quote failed: {e}")
+            amounts = self.router.functions.getAmountsOut(
+                _ONE_ETH_WEI,
+                [self._weth, self._usdc],
+            ).call()
+            return amounts[1] / 1e6    # USDC has 6 decimals
+        except Exception as exc:
+            print(f"[SushiSwap] Price quote failed: {exc}")
             return None
 
     def get_amounts_out(
@@ -74,6 +86,32 @@ class SushiSwap:
             return self.router.functions.getAmountsOut(
                 amount_in_wei, checksummed
             ).call()
-        except Exception as e:
-            print(f"[SushiSwap] getAmountsOut failed: {e}")
+        except Exception as exc:
+            print(f"[SushiSwap] getAmountsOut failed: {exc}")
             return None
+
+    # ── async versions ────────────────────────────────────────────────────────
+
+    async def get_eth_price_usdc_async(self) -> Optional[float]:
+        """
+        Non-blocking wrapper for get_eth_price_usdc().
+
+        Designed to be gathered concurrently with Uniswap V3 fee-tier queries
+        so that both DEX prices are fetched in parallel:
+
+            uni_price, sushi_price = await asyncio.gather(
+                uni.get_best_eth_price_async(),
+                sushi.get_eth_price_usdc_async(),
+            )
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.get_eth_price_usdc)
+
+    async def get_amounts_out_async(
+        self, amount_in_wei: int, path: list
+    ) -> Optional[list]:
+        """Async wrapper for get_amounts_out."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, self.get_amounts_out, amount_in_wei, path
+        )

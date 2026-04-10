@@ -20,6 +20,13 @@ import sys
 import time
 from datetime import datetime
 
+# ── uvloop: faster event loop for any async calls invoked from trade.py ───────
+try:
+    import uvloop
+    uvloop.install()
+except ImportError:
+    pass
+
 from dotenv import load_dotenv
 
 load_dotenv()

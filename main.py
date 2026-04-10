@@ -1,7 +1,15 @@
 # main.py
 
 import asyncio
+import sys
 from contextlib import asynccontextmanager
+
+# ── uvloop: 2–4× faster event loop (Linux/macOS only) ────────────────────────
+try:
+    import uvloop
+    uvloop.install()
+except ImportError:
+    pass  # uvloop not available (Windows / Android) — fall back to asyncio
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
