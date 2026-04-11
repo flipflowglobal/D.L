@@ -25,3 +25,15 @@ env/
 .idea/
 .vscode/
 *.swp
+
+# Build artifacts — Cython
+*.so
+*.c
+*.html
+
+# Build artifacts — Rust
+dex-oracle/target/
+tx-engine/target/
+
+# Build output directory
+build/
