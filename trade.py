@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Darcel King. All rights reserved.
+# SPDX-License-Identifier: BUSL-1.1
 """
 AUREON Trading Bot — main entry point
 ──────────────────────────────────────
 Modes
   --paper   Simulated trading (default) — no real transactions sent
   --live    Live mainnet trading — real ETH spent
+  --flash   Live flash loan arbitrage via NexusFlashReceiver (requires deployment)
 
 Quick start:
   python setup_wallet.py       # one-time wallet setup
   python trade.py              # paper-trade (safe, no real funds)
-  python trade.py --live       # live mainnet trading
+  python trade.py --live       # live mainnet trading (SwapExecutor)
+  python trade.py --flash      # live flash loan arbitrage (NexusFlashReceiver)
 """
 
 import argparse
@@ -37,6 +41,8 @@ TRADE_INTERVAL  = int(os.getenv("SCAN_INTERVAL", "30"))   # seconds between cycl
 MIN_PROFIT_USD  = float(os.getenv("MIN_PROFIT_USD", "2.0"))
 GAS_BUDGET_USD  = float(os.getenv("GAS_BUDGET_USD", "5.0"))
 TRADE_SIZE_ETH  = float(os.getenv("TRADE_SIZE_ETH", "0.05"))  # ETH per trade
+FLASH_LOAN_ETH  = float(os.getenv("FLASH_LOAN_AMOUNT_ETH", "1.0"))  # borrow size
+DRY_RUN         = os.getenv("DRY_RUN", "true").lower() in ("1", "true", "yes")
 
 # ── imports ───────────────────────────────────────────────────────────────────
 
@@ -59,8 +65,13 @@ def _load_wallet_address() -> str:
     return os.getenv("WALLET_ADDRESS", "NOT CONFIGURED")
 
 
-def _banner(live: bool) -> None:
-    mode = "LIVE MAINNET" if live else "PAPER TRADING"
+def _banner(live: bool, flash: bool = False) -> None:
+    if flash:
+        mode = "FLASH LOAN ARB"
+    elif live:
+        mode = "LIVE MAINNET"
+    else:
+        mode = "PAPER TRADING"
     print()
     print("  ╔══════════════════════════════════════════════════╗")
     print(f"  ║  AUREON Trading Bot  —  {mode:<24}║")
@@ -68,8 +79,10 @@ def _banner(live: bool) -> None:
     print(f"  Wallet  : {_load_wallet_address()}")
     print(f"  Interval: {TRADE_INTERVAL}s  |  Trade size: {TRADE_SIZE_ETH} ETH")
     print(f"  Min profit: ${MIN_PROFIT_USD}  |  Gas budget: ${GAS_BUDGET_USD}")
+    if flash:
+        print(f"  Flash borrow: {FLASH_LOAN_ETH} ETH  |  DRY_RUN={DRY_RUN}")
     print()
-    if live:
+    if live or flash:
         print("  *** LIVE MODE — real funds will be used ***")
         confirm = input("  Type YES to confirm: ").strip()
         if confirm != "YES":
@@ -80,8 +93,8 @@ def _banner(live: bool) -> None:
 
 # ── main loop ─────────────────────────────────────────────────────────────────
 
-def run(live: bool = False) -> None:
-    _banner(live)
+def run(live: bool = False, flash: bool = False) -> None:
+    _banner(live, flash)
 
     rpc_url = os.getenv("RPC_URL") or os.getenv("ETH_RPC")
 
@@ -99,10 +112,13 @@ def run(live: bool = False) -> None:
     arb       = ArbitrageScanner(rpc_url=rpc_url)
     liquidity = LiquidityMonitor()
 
-    # Live-mode executor (SwapExecutor) or paper executor
-    if live:
-        from vault.wallet_config       import WalletConfig
-        from engine.execution.swap_executor import SwapExecutor
+    # ── Executor setup ────────────────────────────────────────────────────────
+    flash_executor = None
+    executor       = None
+    sim_executor   = None
+
+    if flash or live:
+        from vault.wallet_config import WalletConfig
         if not rpc_url:
             print("  ERROR: RPC_URL not set in .env")
             sys.exit(1)
@@ -110,9 +126,34 @@ def run(live: bool = False) -> None:
         if not private_key:
             print("  ERROR: PRIVATE_KEY not set — run setup_wallet.py first")
             sys.exit(1)
-        wallet   = WalletConfig(private_key, rpc_url)
-        executor = SwapExecutor(wallet, rpc_url)
+        wallet = WalletConfig(private_key, rpc_url)
         print(f"  [LIVE] Wallet connected: {wallet.address}")
+
+    if flash:
+        # Flash loan mode — uses NexusFlashReceiver + Bellman-Ford
+        from web3 import Web3
+        from engine.mainnet.alchemy_client import AlchemyClient
+        from engine.mainnet.transaction_manager import TransactionManager
+        from nexus_arb.flash_loan_executor import FlashLoanExecutor
+        from nexus_arb.algorithms.bellman_ford import BellmanFord, PriceGraph, PoolPrice
+
+        alchemy_client  = AlchemyClient(rpc_url)
+        w3_flash        = alchemy_client.w3
+        tx_manager      = TransactionManager(
+            w3_flash, wallet.account, alchemy_client,
+            eth_price_usd=market.get_price() or 2500.0,
+        )
+        flash_executor  = FlashLoanExecutor.from_env(
+            w3_flash, wallet.account, tx_manager
+        )
+        bellman_ford    = BellmanFord({"trading": {"flash_loan_fee_bps": 9}})
+        print(f"  [FLASH] NexusFlashReceiver at {os.getenv('FLASH_RECEIVER_ADDRESS', 'NOT SET')}")
+        print(f"  [FLASH] DRY_RUN={DRY_RUN}  borrow={FLASH_LOAN_ETH} ETH")
+
+    elif live:
+        from engine.execution.swap_executor import SwapExecutor
+        executor = SwapExecutor(wallet, rpc_url)
+
     else:
         sim_executor = Executor()
 
@@ -149,78 +190,131 @@ def run(live: bool = False) -> None:
             time.sleep(TRADE_INTERVAL)
             continue
 
-        # 3. Arbitrage scan
-        opps = arb.scan(eth_price)
-        if opps:
-            opp = opps[0]
-            est_profit = opp["est_profit_pct"] / 100 * TRADE_SIZE_ETH * eth_price
-            print(f"  ARB OPP  : buy {opp['buy_on']} @ ${opp['buy_price']:.2f} "
-                  f"→ sell {opp['sell_on']} @ ${opp['sell_price']:.2f} "
-                  f"| spread {opp['spread_pct']:.3f}% | est ${est_profit:.2f}")
+        # 3. Flash loan arbitrage (Bellman-Ford + NexusFlashReceiver)
+        if flash and flash_executor:
+            # Build a minimal price graph from the live DEX price
+            price_graph = PriceGraph()
+            if dex_price and eth_price:
+                from nexus_arb.algorithms.bellman_ford import PoolPrice
+                price_graph.add_price(PoolPrice(
+                    token_in="WETH", token_out="USDC",
+                    price=dex_price, price_after_fee=dex_price * 0.9995,
+                    fee_bps=5, liquidity=500.0, dex="uniswap_v3"
+                ))
+                # Also check ArbitrageScanner for cross-DEX spread
+                simple_opps = arb.scan(eth_price)
+                for o in simple_opps:
+                    spread = o.get("spread_pct", 0)
+                    if spread > 0.1 and o.get("sell_price"):
+                        price_graph.add_price(PoolPrice(
+                            token_in="WETH", token_out="USDC",
+                            price=o["sell_price"],
+                            price_after_fee=o["sell_price"] * 0.997,
+                            fee_bps=30, liquidity=100.0,
+                            dex=o.get("sell_on", "sushiswap")
+                        ))
+                        price_graph.add_price(PoolPrice(
+                            token_in="USDC", token_out="WETH",
+                            price=1.0 / o["buy_price"],
+                            price_after_fee=(1.0 / o["buy_price"]) * 0.997,
+                            fee_bps=30, liquidity=100.0,
+                            dex=o.get("buy_on", "uniswap_v3")
+                        ))
 
-            if est_profit >= MIN_PROFIT_USD and risk.can_trade():
-                if live:
-                    # For live mode: execute the buy leg, then immediately sell
-                    gas_cost = executor.estimate_gas_usd()
-                    if gas_cost <= GAS_BUDGET_USD:
-                        try:
-                            print(f"  [EXEC] Swapping {TRADE_SIZE_ETH} ETH → USDC …")
-                            tx = executor.swap_eth_to_usdc(
-                                amount_eth=TRADE_SIZE_ETH,
-                                slippage=0.005,
-                                expected_usdc=opp["buy_price"] * TRADE_SIZE_ETH,
-                            )
-                            portfolio.log_trade("ARB_BUY", eth_price, TRADE_SIZE_ETH, tx)
-                            risk.record_trade()
-                        except Exception as e:
-                            print(f"  [ERROR] Swap failed: {e}")
-                    else:
-                        print(f"  [SKIP] Gas too high: ${gas_cost:.2f} > budget ${GAS_BUDGET_USD}")
-                else:
-                    # Paper mode
-                    sim_executor.execute_buy(portfolio, eth_price, TRADE_SIZE_ETH)
-                    risk.record_trade()
-        else:
-            # 4. Strategy signal (mean-reversion)
-            signal_val = strategy.signal(eth_price)
-            print(f"  SIGNAL   : {signal_val}")
-
-            if not risk.can_trade():
-                print("  [RISK] Daily trade limit reached — holding")
-            elif signal_val == "BUY" and portfolio.balance_usd >= eth_price * TRADE_SIZE_ETH:
-                if live:
-                    gas_cost = executor.estimate_gas_usd() if hasattr(executor, "estimate_gas_usd") else 0
-                    if gas_cost <= GAS_BUDGET_USD:
-                        try:
-                            tx = executor.swap_eth_to_usdc(
-                                amount_eth=TRADE_SIZE_ETH,
-                                slippage=0.005,
-                                expected_usdc=eth_price * TRADE_SIZE_ETH * 0.995,
-                            )
-                            portfolio.log_trade("BUY", eth_price, TRADE_SIZE_ETH, tx)
-                            risk.record_trade()
-                        except Exception as e:
-                            print(f"  [ERROR] Buy failed: {e}")
-                else:
-                    sim_executor.execute_buy(portfolio, eth_price, TRADE_SIZE_ETH)
-                    risk.record_trade()
-
-            elif signal_val == "SELL" and portfolio.balance_eth >= TRADE_SIZE_ETH:
-                if live:
-                    usdc_amount = eth_price * TRADE_SIZE_ETH
+            nexus_opp = bellman_ford.find_best(price_graph, min_profit_pct=0.05)
+            if nexus_opp:
+                est_profit_usd = nexus_opp.expected_profit_pct / 100 * FLASH_LOAN_ETH * eth_price
+                print(f"  FLASH ARB: {nexus_opp}  est ${est_profit_usd:.2f}")
+                if est_profit_usd >= MIN_PROFIT_USD and risk.can_trade():
                     try:
-                        tx = executor.swap_usdc_to_eth(
-                            amount_usdc=usdc_amount,
-                            slippage=0.005,
-                            expected_eth=TRADE_SIZE_ETH * 0.995,
+                        receipt = flash_executor.execute(
+                            nexus_opp,
+                            borrow_amount_eth=FLASH_LOAN_ETH,
+                            eth_price_usd=eth_price,
+                            dry_run=DRY_RUN,
                         )
-                        portfolio.log_trade("SELL", eth_price, TRADE_SIZE_ETH, tx)
-                        risk.record_trade()
+                        if receipt and hasattr(receipt, "tx_hash"):
+                            portfolio.log_trade("FLASH_ARB", eth_price, FLASH_LOAN_ETH, receipt.tx_hash)
+                            risk.record_trade()
+                            print(f"  [FLASH] tx={receipt.tx_hash[:18]}…  success={receipt.success}")
+                        elif DRY_RUN:
+                            print("  [FLASH] dry_run — tx not broadcast")
                     except Exception as e:
-                        print(f"  [ERROR] Sell failed: {e}")
-                else:
-                    sim_executor.execute_sell(portfolio, eth_price, TRADE_SIZE_ETH)
-                    risk.record_trade()
+                        print(f"  [ERROR] Flash loan failed: {e}")
+            else:
+                print("  FLASH ARB: no profitable cycle detected this cycle")
+
+        # 4. Arbitrage scan (simple cross-DEX for live/paper modes)
+        elif not flash:
+            opps = arb.scan(eth_price)
+            if opps:
+                opp = opps[0]
+                est_profit = opp["est_profit_pct"] / 100 * TRADE_SIZE_ETH * eth_price
+                print(f"  ARB OPP  : buy {opp['buy_on']} @ ${opp['buy_price']:.2f} "
+                      f"→ sell {opp['sell_on']} @ ${opp['sell_price']:.2f} "
+                      f"| spread {opp['spread_pct']:.3f}% | est ${est_profit:.2f}")
+
+                if est_profit >= MIN_PROFIT_USD and risk.can_trade():
+                    if live:
+                        gas_cost = executor.estimate_gas_usd()
+                        if gas_cost <= GAS_BUDGET_USD:
+                            try:
+                                print(f"  [EXEC] Swapping {TRADE_SIZE_ETH} ETH → USDC …")
+                                tx = executor.swap_eth_to_usdc(
+                                    amount_eth=TRADE_SIZE_ETH,
+                                    slippage=0.005,
+                                    expected_usdc=opp["buy_price"] * TRADE_SIZE_ETH,
+                                )
+                                portfolio.log_trade("ARB_BUY", eth_price, TRADE_SIZE_ETH, tx)
+                                risk.record_trade()
+                            except Exception as e:
+                                print(f"  [ERROR] Swap failed: {e}")
+                        else:
+                            print(f"  [SKIP] Gas too high: ${gas_cost:.2f} > budget ${GAS_BUDGET_USD}")
+                    else:
+                        sim_executor.execute_buy(portfolio, eth_price, TRADE_SIZE_ETH)
+                        risk.record_trade()
+            else:
+                # 5. Strategy signal (mean-reversion)
+                signal_val = strategy.signal(eth_price)
+                print(f"  SIGNAL   : {signal_val}")
+
+                if not risk.can_trade():
+                    print("  [RISK] Daily trade limit reached — holding")
+                elif signal_val == "BUY" and portfolio.balance_usd >= eth_price * TRADE_SIZE_ETH:
+                    if live:
+                        gas_cost = executor.estimate_gas_usd() if hasattr(executor, "estimate_gas_usd") else 0
+                        if gas_cost <= GAS_BUDGET_USD:
+                            try:
+                                tx = executor.swap_eth_to_usdc(
+                                    amount_eth=TRADE_SIZE_ETH,
+                                    slippage=0.005,
+                                    expected_usdc=eth_price * TRADE_SIZE_ETH * 0.995,
+                                )
+                                portfolio.log_trade("BUY", eth_price, TRADE_SIZE_ETH, tx)
+                                risk.record_trade()
+                            except Exception as e:
+                                print(f"  [ERROR] Buy failed: {e}")
+                    else:
+                        sim_executor.execute_buy(portfolio, eth_price, TRADE_SIZE_ETH)
+                        risk.record_trade()
+
+                elif signal_val == "SELL" and portfolio.balance_eth >= TRADE_SIZE_ETH:
+                    if live:
+                        usdc_amount = eth_price * TRADE_SIZE_ETH
+                        try:
+                            tx = executor.swap_usdc_to_eth(
+                                amount_usdc=usdc_amount,
+                                slippage=0.005,
+                                expected_eth=TRADE_SIZE_ETH * 0.995,
+                            )
+                            portfolio.log_trade("SELL", eth_price, TRADE_SIZE_ETH, tx)
+                            risk.record_trade()
+                        except Exception as e:
+                            print(f"  [ERROR] Sell failed: {e}")
+                    else:
+                        sim_executor.execute_sell(portfolio, eth_price, TRADE_SIZE_ETH)
+                        risk.record_trade()
 
         # 5. Portfolio summary
         summary = portfolio.summary()
@@ -253,5 +347,10 @@ if __name__ == "__main__":
         action="store_true",
         help="Run in live mainnet mode (real funds). Default is paper trading.",
     )
+    parser.add_argument(
+        "--flash",
+        action="store_true",
+        help="Run in flash loan arbitrage mode via NexusFlashReceiver (requires FLASH_RECEIVER_ADDRESS).",
+    )
     args = parser.parse_args()
-    run(live=args.live)
+    run(live=args.live, flash=args.flash)
