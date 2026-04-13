@@ -1,0 +1,39 @@
+__pycache__/
+*.pyc
+*.pyo
+*.db
+
+# Secrets — NEVER commit these
+.env
+vault/wallet.json
+vault/trade_log.json
+
+# Logs / runtime
+DL_SYSTEM/data/
+DL_SYSTEM/logs/
+logs/
+*.log
+*.pid
+nohup.out
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Build artifacts — Cython
+*.so
+*.c
+*.html
+
+# Build artifacts — Rust
+dex-oracle/target/
+tx-engine/target/
+
+# Build output directory
+build/

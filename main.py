@@ -1,11 +1,34 @@
 # main.py
 
 import asyncio
+import sys
+from contextlib import asynccontextmanager
+
+# ── uvloop: 2–4× faster event loop (Linux/macOS only) ────────────────────────
+try:
+    import uvloop
+    uvloop.install()
+except ImportError:
+    pass  # uvloop not available (Windows / Android) — fall back to asyncio
+
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from intelligence.memory import memory
 from intelligence.autonomy import loop
+
+
+# --------------------------------------------------
+# LIFESPAN — replaces deprecated @app.on_event
+# --------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await memory.init_db()
+    print("[AUREON] Memory database initialized")
+    print("[AUREON] Cognitive system online")
+    yield
+
 
 # --------------------------------------------------
 # CREATE FASTAPI APPLICATION
@@ -14,21 +37,9 @@ from intelligence.autonomy import loop
 app = FastAPI(
     title="AUREON Cognitive System",
     description="Autonomous cognitive agent for OnTheDL architecture",
-    version="1.0"
+    version="1.0",
+    lifespan=lifespan,
 )
-
-# --------------------------------------------------
-# STARTUP INITIALIZATION
-# --------------------------------------------------
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    Initialize system components when server starts
-    """
-    await memory.init_db()
-    print("[AUREON] Memory database initialized")
-    print("[AUREON] Cognitive system online")
 
 
 # --------------------------------------------------
@@ -112,4 +123,4 @@ async def get_memory(agent_id: str, key: str):
 
 @app.get("/health")
 async def health():
-    return {"health": "ok"}
+    return {"status": "ok"}

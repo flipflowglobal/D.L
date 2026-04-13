@@ -1,0 +1,27 @@
+# ── Core (required, works on Linux / macOS / Windows / Android Termux) ────────
+python-dotenv>=1.0.0
+requests>=2.31.0
+httpx>=0.25.0
+
+# ── Blockchain ────────────────────────────────────────────────────────────────
+web3>=6.11.0
+eth-account>=0.10.0
+websockets<14.0
+
+# ── Async / persistence ───────────────────────────────────────────────────────
+aiosqlite>=0.19.0
+uvloop>=0.19.0          # 2–4× faster asyncio event loop (Linux/macOS only)
+
+# ── API server ────────────────────────────────────────────────────────────────
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+
+# ── Compilation tools ────────────────────────────────────────────────────────
+# cython>=3.0.0         # uncomment if not installed globally
+py-solc-x>=2.0.0        # Solidity compiler wrapper (Phase 4)
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+anyio>=4.0.0

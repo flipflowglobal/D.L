@@ -16,8 +16,13 @@ def main():
     PRIVATE_KEY = os.getenv("PRIVATE_KEY")
     RPC_URL = os.getenv("RPC_URL")
 
-    # Receiver wallet
-    RECIPIENT = "0x49Bd5CacB8402DA3Bf30EC9F21500846B6a8E8aE"
+    # Receiver wallet — set TEST_RECIPIENT in .env
+    RECIPIENT = os.getenv("TEST_RECIPIENT")
+    if not RECIPIENT:
+        raise RuntimeError(
+            "TEST_RECIPIENT not set. Add it to .env:\n"
+            "  TEST_RECIPIENT=0xYourRecipientAddress"
+        )
 
     # Amount to send
     AMOUNT_ETH = 0.01
