@@ -111,12 +111,20 @@ class AlchemyClient:
         if not url:
             return None
 
+        # Parse the host to avoid incomplete-substring false matches
+        # (e.g. "evilalchemy.com" must not match "alchemy.com")
+        try:
+            from urllib.parse import urlparse
+            host = urlparse(url).hostname or ""
+        except Exception:
+            host = ""
+
         # Alchemy: simple http→wss scheme swap
-        if "alchemy.com" in url:
+        if host == "eth-mainnet.g.alchemy.com" or host.endswith(".alchemy.com"):
             return re.sub(r"^https?://", "wss://", url)
 
         # Infura: insert /ws/ before /v3/
-        if "infura.io" in url:
+        if host == "mainnet.infura.io" or host.endswith(".infura.io"):
             url = re.sub(r"^https?://", "wss://", url)
             url = re.sub(r"/v3/", "/ws/v3/", url)
             return url

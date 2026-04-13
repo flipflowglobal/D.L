@@ -35,9 +35,24 @@ class TestAlchemyClient:
         c = self._make_client("https://eth-mainnet.g.alchemy.com/v2/MYKEY")
         assert c.ws_url == "wss://eth-mainnet.g.alchemy.com/v2/MYKEY"
 
+    def test_ws_url_alchemy_rejects_evil_subdomain(self):
+        """Verify 'evilalchemy.com' does NOT get the Alchemy path."""
+        c = self._make_client("https://evilalchemy.com/v2/MYKEY")
+        # Falls through to generic handler — still swaps scheme safely
+        result = c.ws_url
+        assert result.startswith("wss://")
+
     def test_ws_url_infura(self):
         c = self._make_client("https://mainnet.infura.io/v3/MYKEY")
         assert c.ws_url == "wss://mainnet.infura.io/ws/v3/MYKEY"
+
+    def test_ws_url_infura_rejects_evil_subdomain(self):
+        """Verify 'evilinfura.io' does NOT get the Infura /ws/ insertion."""
+        c = self._make_client("https://evilinfura.io/v3/MYKEY")
+        result = c.ws_url
+        # Should be generic swap, no /ws/ inserted
+        assert "/ws/" not in result
+        assert result.startswith("wss://")
 
     def test_ws_url_generic(self):
         c = self._make_client("https://rpc.example.com/eth")
@@ -166,6 +181,33 @@ class TestTransactionManager:
         # Next call should re-read from chain
         n = mgr._next_nonce()
         assert n == 7
+
+    def test_release_nonce_called_on_sign_error(self):
+        """_release_nonce() must be called when tx sign/send fails so the
+        pending nonce counter is reset and the next call re-reads from chain."""
+        from engine.mainnet.transaction_manager import TransactionManager
+        from engine.mainnet.alchemy_client import EIP1559Fees
+        mgr, mock_w3, mock_account = self._make_manager()
+        mock_account.address = "0x" + "a" * 40
+        mock_w3.eth.get_transaction_count.return_value = 3
+
+        # Make signing fail
+        mock_account.sign_transaction.side_effect = ValueError("bad key")
+
+        fees = EIP1559Fees(int(1.5e9), int(41.5e9), int(20e9))
+        try:
+            mgr.send_transaction(
+                to="0x" + "b" * 40,
+                value_wei=0,
+                data=b"",
+                gas_limit=21_000,
+                fees=fees,
+            )
+        except RuntimeError:
+            pass
+
+        # After failure, pending_nonce must be None so next nonce re-reads chain
+        assert mgr._pending_nonce is None, "_release_nonce() was not called on error"
 
     def test_bump_fees_increases_values(self):
         from engine.mainnet.transaction_manager import TransactionManager

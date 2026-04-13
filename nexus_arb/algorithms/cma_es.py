@@ -129,7 +129,9 @@ class CMAES1D:
             C = (1 - self.c1 - self.cmu) * C + rank_one + rank_mu
 
             exp_arg = (self.cs / self.ds) * (abs(ps) / self.chiN - 1)
-            sigma *= math.exp(max(min(exp_arg, 20.0), -20.0))  # clamp to prevent overflow
+            sigma *= math.exp(max(min(exp_arg, 20.0), -20.0))  # clamp exponent to prevent float overflow
+            # Clamp sigma to [1e-10, log_max-log_min]: must stay within the log-space
+            # search bounds and must not shrink to zero (which would cause degenerate sampling)
             sigma  = max(min(sigma, log_max - log_min), 1e-10)
 
             if sigma < self.tol or abs(m - m_old) < 1e-12:
