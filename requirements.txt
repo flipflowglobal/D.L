@@ -21,6 +21,11 @@ pydantic>=2.0.0
 # cython>=3.0.0         # uncomment if not installed globally
 py-solc-x>=2.0.0        # Solidity compiler wrapper (Phase 4)
 
+# ── Nexus-ARB algorithms ─────────────────────────────────────────────────────
+numpy>=1.24.0
+torch>=2.0.0
+eth-abi>=4.0.0          # ABI encoding for flash loan calldata
+
 # ── Testing ───────────────────────────────────────────────────────────────────
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
