@@ -20,6 +20,18 @@ class _Config:
     PRIVATE_KEY:    str | None = os.getenv("PRIVATE_KEY")
     WALLET_ADDRESS: str | None = os.getenv("WALLET_ADDRESS")
 
+    # ── Alchemy-specific ──────────────────────────────────────────────────────
+    # ALCHEMY_API_KEY is an alternative to a full RPC_URL.
+    # If set and RPC_URL is empty, RPC_URL is derived automatically.
+    ALCHEMY_API_KEY: str | None = os.getenv("ALCHEMY_API_KEY")
+    CHAIN_ID:        int        = int(os.getenv("CHAIN_ID", "1"))   # 1 = mainnet
+
+    # ── Transaction confirmation ──────────────────────────────────────────────
+    TX_CONFIRM_TIMEOUT: int   = int(os.getenv("TX_CONFIRM_TIMEOUT",  "120"))
+    TX_BUMP_TIMEOUT:    int   = int(os.getenv("TX_BUMP_TIMEOUT",     "45"))
+    MAX_GAS_LIMIT:      int   = int(os.getenv("MAX_GAS_LIMIT",       "500000"))
+    GAS_FEE_BUFFER:     float = float(os.getenv("GAS_FEE_BUFFER_MULTIPLIER", "1.15"))
+
     # ── Trading parameters ────────────────────────────────────────────────────
     TRADE_SIZE_ETH:    float = float(os.getenv("TRADE_SIZE_ETH",    "0.05"))
     SCAN_INTERVAL:     int   = int(os.getenv("SCAN_INTERVAL",       "30"))
@@ -44,13 +56,32 @@ class _Config:
 
     def is_live_ready(self) -> bool:
         """Return True if all variables required for live trading are set."""
-        return bool(self.RPC_URL and self.PRIVATE_KEY and self.WALLET_ADDRESS)
+        rpc = self.RPC_URL or (
+            f"https://eth-mainnet.g.alchemy.com/v2/{self.ALCHEMY_API_KEY}"
+            if self.ALCHEMY_API_KEY else None
+        )
+        return bool(rpc and self.PRIVATE_KEY and self.WALLET_ADDRESS)
+
+    def get_rpc_url(self) -> str | None:
+        """
+        Return the effective RPC URL.
+
+        Priority:
+          1. RPC_URL env var (explicit full URL)
+          2. ETH_RPC env var (alias)
+          3. Derived from ALCHEMY_API_KEY: https://eth-mainnet.g.alchemy.com/v2/KEY
+        """
+        if self.RPC_URL:
+            return self.RPC_URL
+        if self.ALCHEMY_API_KEY:
+            return f"https://eth-mainnet.g.alchemy.com/v2/{self.ALCHEMY_API_KEY}"
+        return None
 
     def validate_live(self) -> None:
         """Raise ValueError listing every missing variable for live trading."""
         missing = []
-        if not self.RPC_URL:
-            missing.append("RPC_URL")
+        if not self.get_rpc_url():
+            missing.append("RPC_URL (or ALCHEMY_API_KEY)")
         if not self.PRIVATE_KEY:
             missing.append("PRIVATE_KEY")
         if not self.WALLET_ADDRESS:
@@ -58,7 +89,8 @@ class _Config:
         if missing:
             raise ValueError(
                 f"Live trading requires these .env variables: {', '.join(missing)}\n"
-                "Run `python setup_wallet.py` to create a wallet and patch .env."
+                "Run `python setup_wallet.py` to create a wallet and patch .env.\n"
+                "Get a free Alchemy API key at https://www.alchemy.com"
             )
 
 
