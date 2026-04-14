@@ -12,7 +12,7 @@ async def main():
     orchestrator = Orchestrator()
 
     while True:
-        orchestrator.run_cycle()
+        await asyncio.to_thread(orchestrator.run_cycle)
         await asyncio.sleep(600)
 
 
