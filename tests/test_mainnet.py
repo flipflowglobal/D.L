@@ -16,7 +16,7 @@ Tests cover:
 import sys
 import os
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -241,7 +241,7 @@ class TestTransactionManager:
         assert mgr._nonce is None
 
     def test_parse_receipt_success(self):
-        from engine.mainnet.transaction_manager import TransactionManager, TxReceipt
+        from engine.mainnet.transaction_manager import TxReceipt
         mgr = self._make_manager()
         raw = {
             "status":            1,
@@ -317,7 +317,6 @@ class TestTransactionManager:
         assert bumped_tx["maxPriorityFeePerGas"] > original_tx["maxPriorityFeePerGas"]
 
     def test_ensure_approval_skipped_when_sufficient(self):
-        from engine.mainnet.transaction_manager import TransactionManager
         mgr = self._make_manager()
 
         # Mock ERC-20 contract

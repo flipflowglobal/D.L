@@ -9,6 +9,8 @@ Import this anywhere you need run-time config:
 """
 
 import os
+from typing import Optional
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,9 +18,21 @@ load_dotenv()
 
 class _Config:
     # ── Ethereum / blockchain ─────────────────────────────────────────────────
-    RPC_URL:        str | None = os.getenv("RPC_URL") or os.getenv("ETH_RPC")
-    PRIVATE_KEY:    str | None = os.getenv("PRIVATE_KEY")
-    WALLET_ADDRESS: str | None = os.getenv("WALLET_ADDRESS")
+    RPC_URL:        Optional[str] = os.getenv("RPC_URL") or os.getenv("ETH_RPC")
+    PRIVATE_KEY:    Optional[str] = os.getenv("PRIVATE_KEY")
+    WALLET_ADDRESS: Optional[str] = os.getenv("WALLET_ADDRESS")
+
+    # ── Alchemy-specific ──────────────────────────────────────────────────────
+    # ALCHEMY_API_KEY is an alternative to a full RPC_URL.
+    # If set and RPC_URL is empty, RPC_URL is derived automatically.
+    ALCHEMY_API_KEY: Optional[str] = os.getenv("ALCHEMY_API_KEY")
+    CHAIN_ID:        int           = int(os.getenv("CHAIN_ID", "1"))   # 1 = mainnet
+
+    # ── Transaction confirmation ──────────────────────────────────────────────
+    TX_CONFIRM_TIMEOUT: int   = int(os.getenv("TX_CONFIRM_TIMEOUT",  "120"))
+    TX_BUMP_TIMEOUT:    int   = int(os.getenv("TX_BUMP_TIMEOUT",     "45"))
+    MAX_GAS_LIMIT:      int   = int(os.getenv("MAX_GAS_LIMIT",       "500000"))
+    GAS_FEE_BUFFER:     float = float(os.getenv("GAS_FEE_BUFFER_MULTIPLIER", "1.15"))
 
     # ── Alchemy-specific ──────────────────────────────────────────────────────
     # ALCHEMY_API_KEY is an alternative to a full RPC_URL.
@@ -46,10 +60,10 @@ class _Config:
     STRATEGY_THRESHOLD: float = float(os.getenv("STRATEGY_THRESHOLD", "0.015"))
 
     # ── DL_SYSTEM quest credentials ───────────────────────────────────────────
-    GALXE_EMAIL:    str | None = os.getenv("GALXE_EMAIL")
-    GALXE_PASSWORD: str | None = os.getenv("GALXE_PASSWORD")
-    LAYER3_EMAIL:   str | None = os.getenv("LAYER3_EMAIL")
-    LAYER3_PASSWORD: str | None = os.getenv("LAYER3_PASSWORD")
+    GALXE_EMAIL:    Optional[str] = os.getenv("GALXE_EMAIL")
+    GALXE_PASSWORD: Optional[str] = os.getenv("GALXE_PASSWORD")
+    LAYER3_EMAIL:   Optional[str] = os.getenv("LAYER3_EMAIL")
+    LAYER3_PASSWORD: Optional[str] = os.getenv("LAYER3_PASSWORD")
 
     # ── Runtime ───────────────────────────────────────────────────────────────
     DEBUG: bool = os.getenv("DEBUG", "false").lower() in ("1", "true", "yes")
@@ -62,7 +76,7 @@ class _Config:
         )
         return bool(rpc and self.PRIVATE_KEY and self.WALLET_ADDRESS)
 
-    def get_rpc_url(self) -> str | None:
+    def get_rpc_url(self) -> Optional[str]:
         """
         Return the effective RPC URL.
 

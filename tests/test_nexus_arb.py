@@ -311,7 +311,7 @@ class TestTradingPolicy:
         assert policy.action_name(ACTION_SELL) == "SELL"
 
     def test_policy_probs_sum_to_one(self):
-        from nexus_arb.algorithms.ppo import TradingPolicy, STATE_DIM
+        from nexus_arb.algorithms.ppo import TradingPolicy
         policy = TradingPolicy(seed=2)
         state  = np.array([0.1, -0.001, 0.02, 0.0, 0.0, 1.0])
         probs  = policy.policy_probs(state)
