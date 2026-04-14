@@ -140,12 +140,11 @@ def run(live: bool = False, flash: bool = False) -> None:
         alchemy_client  = AlchemyClient(rpc_url)
         w3_flash        = alchemy_client.w3
         tx_manager      = TransactionManager(
-            w3_flash, wallet.account, alchemy_client,
-            eth_price_usd=market.get_price() or 2500.0,
+            client=alchemy_client,
+            private_key=wallet.private_key,
+            chain_id=int(os.getenv("CHAIN_ID", "1")),
         )
-        flash_executor  = FlashLoanExecutor.from_env(
-            w3_flash, wallet.account, tx_manager
-        )
+        flash_executor  = FlashLoanExecutor.from_env(w3_flash, tx_manager)
         bellman_ford    = BellmanFord({"trading": {"flash_loan_fee_bps": 9}})
         print(f"  [FLASH] NexusFlashReceiver at {os.getenv('FLASH_RECEIVER_ADDRESS', 'NOT SET')}")
         print(f"  [FLASH] DRY_RUN={DRY_RUN}  borrow={FLASH_LOAN_AMOUNT_ETH} ETH")

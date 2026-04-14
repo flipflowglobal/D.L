@@ -162,17 +162,23 @@ class BellmanFord:
             return []
 
         opportunities: list[ArbitrageOpportunity] = []
-        seen_cycles: set[frozenset] = set()
+        seen_cycles: set[tuple] = set()
 
         for node_idx in neg_cycle_nodes:
             cycle_tokens = self._reconstruct_cycle(node_idx, pred, tokens, n)
             if not cycle_tokens:
                 continue
 
-            cycle_key = frozenset(cycle_tokens)
-            if cycle_key in seen_cycles:
+            # Canonical key: rotate the cycle (excluding repeated last token)
+            # to start at the lexicographically smallest token, then tuple.
+            # This deduplicates cycles that start at different points but
+            # follow the same path, while preserving direction and pool identity.
+            inner = cycle_tokens[:-1]  # drop the repeated last token
+            min_idx = inner.index(min(inner))
+            canonical = tuple(inner[min_idx:] + inner[:min_idx])
+            if canonical in seen_cycles:
                 continue
-            seen_cycles.add(cycle_key)
+            seen_cycles.add(canonical)
 
             opp = self._evaluate_cycle(cycle_tokens, graph)
             if opp and opp.expected_profit_pct >= min_profit_pct:
@@ -263,3 +269,6 @@ class BellmanFord:
     ) -> Optional[ArbitrageOpportunity]:
         opps = self.detect(graph, min_profit_pct)
         return opps[0] if opps else None
+
+# Compatibility alias used by nexus_arb/algorithms/__init__.py
+BellmanFordArb = BellmanFord

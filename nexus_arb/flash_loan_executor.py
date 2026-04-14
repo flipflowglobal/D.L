@@ -58,7 +58,7 @@ _NEXUS_ABI = [
         "outputs": [],
     },
     {
-        "name": "totalProfitWei",
+        "name": "totalProfit",
         "type": "function",
         "stateMutability": "view",
         "inputs": [],
@@ -180,8 +180,8 @@ class FlashLoanExecutor:
     Submits flash loan arbitrage transactions to NexusFlashReceiver.sol.
 
     Usage:
-        executor = FlashLoanExecutor(w3, account, contract_address, tx_manager)
-        receipt  = executor.execute(opportunity, borrow_amount_eth, eth_price_usd)
+        executor = FlashLoanExecutor(w3, contract_address, tx_manager)
+        receipt  = executor.execute(opportunity, borrow_amount_eth)
     """
 
     # Minimum gas to reserve for the flash loan overhead (Aave callback + repay)
@@ -191,13 +191,11 @@ class FlashLoanExecutor:
     def __init__(
         self,
         w3: Web3,
-        account,                          # LocalAccount
         contract_address: str,
-        tx_manager,                       # TransactionManager
+        tx_manager,                       # engine.mainnet.TransactionManager
         slippage: float = 0.005,          # 0.5% default slippage guard
     ) -> None:
         self.w3               = w3
-        self.account          = account
         self.contract_address = Web3.to_checksum_address(contract_address)
         self.tx_manager       = tx_manager
         self.slippage         = slippage
@@ -258,17 +256,18 @@ class FlashLoanExecutor:
             log.info("[FlashLoanExecutor] dry_run=True — not broadcasting")
             return None
 
-        tx = self.contract.functions.executeArbitrage(
-            borrow_token,
-            borrow_wei,
-            [s.to_tuple() for s in steps],
-        ).build_transaction({
-            "from":    self.account.address,
-            "gas":     gas_limit,
-            "chainId": self.w3.eth.chain_id,
-        })
-
-        return self.tx_manager.send_transaction_dict(tx)
+        # ABI-encode the calldata and dispatch via TransactionManager
+        calldata = self.contract.encodeABI(
+            fn_name="executeArbitrage",
+            args=[borrow_token, borrow_wei, [s.to_tuple() for s in steps]],
+        )
+        tx = self.tx_manager.build_tx(
+            to=self.contract_address,
+            value_wei=0,
+            data=Web3.to_bytes(hexstr=calldata),
+            gas_limit=gas_limit,
+        )
+        return self.tx_manager.send_and_confirm(tx)
 
     # ── Step builder ──────────────────────────────────────────────────────────
 
@@ -355,18 +354,18 @@ class FlashLoanExecutor:
     def total_profit_eth(self) -> float:
         """Read accumulated on-chain profit from the contract."""
         try:
-            wei = self.contract.functions.totalProfitWei().call()
+            wei = self.contract.functions.totalProfit().call()
             return wei / 1e18
         except Exception:
             return 0.0
 
     @classmethod
-    def from_env(cls, w3: Web3, account, tx_manager, slippage: float = 0.005):
-        """Construct from environment variables."""
+    def from_env(cls, w3: Web3, tx_manager, slippage: float = 0.005):
+        """Construct from environment variables (FLASH_RECEIVER_ADDRESS)."""
         addr = os.getenv("FLASH_RECEIVER_ADDRESS")
         if not addr:
             raise ValueError(
                 "FLASH_RECEIVER_ADDRESS not set. "
                 "Deploy NexusFlashReceiver.sol and set this variable."
             )
-        return cls(w3, account, addr, tx_manager, slippage)
+        return cls(w3, addr, tx_manager, slippage)

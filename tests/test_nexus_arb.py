@@ -24,7 +24,8 @@ class TestWalletGeneration:
     def test_generates_valid_private_key(self):
         from eth_account import Account
         acct = Account.create()
-        assert len(acct.key.hex()) == 64
+        key_hex = acct.key.hex()
+        assert len(key_hex) == 64  # 32 bytes = 64 hex chars (no 0x prefix)
 
     def test_each_wallet_is_unique(self):
         from eth_account import Account

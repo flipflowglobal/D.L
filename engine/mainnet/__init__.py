@@ -1,8 +1,6 @@
-# engine/mainnet — Production Ethereum mainnet connectivity components
-# Copyright (c) 2026 Darcel King. All rights reserved.
-# SPDX-License-Identifier: BUSL-1.1
+"""engine.mainnet — Alchemy mainnet execution layer."""
 
-from .alchemy_client import AlchemyClient
-from .transaction_manager import TransactionManager
+from engine.mainnet.alchemy_client      import AlchemyClient
+from engine.mainnet.transaction_manager import TransactionManager, TxReceipt
 
-__all__ = ["AlchemyClient", "TransactionManager"]
+__all__ = ["AlchemyClient", "TransactionManager", "TxReceipt"]

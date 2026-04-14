@@ -97,7 +97,7 @@ class CMAES1D:
             order    = np.argsort(fk_neg)
             xk_sorted = xk_log[order]
             zk_sorted = zk[order]
-            fk_sorted = fk[order[::-1]]
+            fk_sorted = fk[order]          # order[0] is the best (highest profit)
 
             if fk_sorted[0] > best_profit:
                 best_profit = fk_sorted[0]
@@ -206,3 +206,6 @@ class TradeOptimizer:
             x_start=start,
             eth_price_usd=eth_price_usd
         )
+
+# Compatibility alias used by nexus_arb/algorithms/__init__.py
+CMAES = TradeOptimizer

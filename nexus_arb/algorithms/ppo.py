@@ -280,3 +280,6 @@ class PPOAgent:
             "entropy":     total_entropy / max(n_batches, 1),
             "updates":     self._updates
         }
+
+# Compatibility alias used by nexus_arb/algorithms/__init__.py
+TradingPolicy = PPOAgent

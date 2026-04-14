@@ -57,7 +57,7 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
     address public owner;
     address public executor;          // Python bot hot wallet
     bool    public paused;
-    uint256 public totalProfitWei;    // Lifetime accumulated profit
+    uint256 public totalProfit;       // Lifetime accumulated profit (token-denominated)
 
     // ─── Events ───────────────────────────────────────────────────────────────
     event ArbitrageExecuted(
@@ -69,6 +69,7 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
     event Paused(bool state);
     event ExecutorUpdated(address newExecutor);
     event EmergencyWithdraw(address token, uint256 amount);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     // ─── Custom Errors ────────────────────────────────────────────────────────
     error Unauthorized();
@@ -186,7 +187,7 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
 
         if (profit > 0) {
             IERC20(asset).transfer(owner, profit);
-            totalProfitWei += profit;
+            totalProfit += profit;
         }
 
         emit ArbitrageExecuted(asset, amount, profit, gasStart - gasleft());
@@ -205,6 +206,8 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
             _swapCurve(step, amountIn);
         } else if (step.dexType == DEX_BALANCER) {
             _swapBalancer(step, amountIn);
+        } else {
+            revert("NexusFlashReceiver: unsupported dexType");
         }
     }
 
@@ -273,6 +276,8 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
     }
 
     function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "NexusFlashReceiver: new owner is zero address");
+        emit OwnershipTransferred(owner, newOwner);
         owner = newOwner;
     }
 
@@ -289,15 +294,28 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
     function emergencyWithdrawETH() external onlyOwner {
         uint256 balance = address(this).balance;
         if (balance > 0) {
-            payable(owner).transfer(balance);
+            (bool success, ) = payable(owner).call{value: balance}("");
+            require(success, "NexusFlashReceiver: ETH transfer failed");
         }
     }
 
     // ─── Internal Helpers ────────────────────────────────────────────────────
+
+    /// @dev Call an ERC-20 function and require success + optional bool return.
+    ///      Handles both tokens that revert on failure and non-standard tokens
+    ///      that return false instead of reverting (e.g. older USDT).
+    function _callOptionalReturn(address token, bytes memory data) internal {
+        (bool success, bytes memory returnData) = token.call(data);
+        require(success, "NexusFlashReceiver: ERC20 call failed");
+        if (returnData.length > 0) {
+            require(abi.decode(returnData, (bool)), "NexusFlashReceiver: ERC20 operation failed");
+        }
+    }
+
     function _safeApprove(address token, address spender, uint256 amount) internal {
         // Reset to 0 first (required by some tokens, e.g. USDT)
-        IERC20(token).approve(spender, 0);
-        IERC20(token).approve(spender, amount);
+        _callOptionalReturn(token, abi.encodeWithSelector(IERC20.approve.selector, spender, 0));
+        _callOptionalReturn(token, abi.encodeWithSelector(IERC20.approve.selector, spender, amount));
     }
 
     receive() external payable {}

@@ -169,3 +169,6 @@ class MultiTokenUKF:
         if key not in self._filters:
             return True
         return self._filters[key]._to_state().is_trending_up
+
+# Compatibility aliases used by nexus_arb/algorithms/__init__.py
+UnscentedKalmanFilter = MultiTokenUKF

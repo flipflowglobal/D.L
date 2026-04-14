@@ -144,3 +144,6 @@ class DexBandit:
 
     def get_rankings(self) -> dict[tuple[str, str], list[dict]]:
         return {k: b.stats_table() for k, b in self._bandits.items()}
+
+# Compatibility alias used by nexus_arb/algorithms/__init__.py
+ThompsonSamplingBandit = DexBandit
