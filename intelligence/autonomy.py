@@ -132,7 +132,6 @@ class AgentLoop:
                 risk.record_trade()
                 action = "SELL"
 
-        sup_status = self._supervisor.status() if self._supervisor else {}
         pe_stats   = self._price_engine.stats() if self._price_engine else {}
 
         return {
