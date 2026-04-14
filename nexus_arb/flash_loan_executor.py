@@ -227,6 +227,18 @@ class FlashLoanExecutor:
         Returns:
             TransactionReceipt (or None if dry_run=True)
         """
+        # Validate opportunity structure before any on-chain work
+        if not opportunity.cycle or len(opportunity.cycle) < 3:
+            raise ValueError(
+                f"ArbitrageOpportunity must have cycle of length ≥3, "
+                f"got: {opportunity.cycle!r}"
+            )
+        if not opportunity.pools or len(opportunity.pools) != len(opportunity.cycle) - 1:
+            raise ValueError(
+                f"ArbitrageOpportunity pools count ({len(opportunity.pools)}) "
+                f"must equal cycle length - 1 ({len(opportunity.cycle) - 1})"
+            )
+
         # Check contract is not paused
         if self._is_paused():
             log.warning("[FlashLoanExecutor] Contract is paused — skipping")

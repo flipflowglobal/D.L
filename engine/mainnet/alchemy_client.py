@@ -119,12 +119,17 @@ class AlchemyClient:
         except Exception:
             host = ""
 
-        # Alchemy: simple http→wss scheme swap
-        if host == "eth-mainnet.g.alchemy.com" or host.endswith(".alchemy.com"):
+        # Known Alchemy hostname pattern: *.g.alchemy.com  or  alchemy.com
+        # Require the host to end with exactly ".g.alchemy.com" or ".alchemy.com"
+        # to prevent "fakealchemy.com.attacker.com" from matching.
+        _ALCHEMY_SUFFIXES = (".g.alchemy.com", ".alchemy.com")
+        _INFURA_SUFFIX    = ".infura.io"
+
+        if any(host == s.lstrip(".") or host.endswith(s) for s in _ALCHEMY_SUFFIXES):
             return re.sub(r"^https?://", "wss://", url)
 
         # Infura: insert /ws/ before /v3/
-        if host == "mainnet.infura.io" or host.endswith(".infura.io"):
+        if host == "infura.io" or host.endswith(_INFURA_SUFFIX):
             url = re.sub(r"^https?://", "wss://", url)
             url = re.sub(r"/v3/", "/ws/v3/", url)
             return url

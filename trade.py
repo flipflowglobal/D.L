@@ -41,7 +41,7 @@ TRADE_INTERVAL  = int(os.getenv("SCAN_INTERVAL", "30"))   # seconds between cycl
 MIN_PROFIT_USD  = float(os.getenv("MIN_PROFIT_USD", "2.0"))
 GAS_BUDGET_USD  = float(os.getenv("GAS_BUDGET_USD", "5.0"))
 TRADE_SIZE_ETH  = float(os.getenv("TRADE_SIZE_ETH", "0.05"))  # ETH per trade
-FLASH_LOAN_ETH  = float(os.getenv("FLASH_LOAN_AMOUNT_ETH", "1.0"))  # borrow size
+FLASH_LOAN_AMOUNT_ETH  = float(os.getenv("FLASH_LOAN_AMOUNT_ETH", "1.0"))  # borrow size
 DRY_RUN         = os.getenv("DRY_RUN", "true").lower() in ("1", "true", "yes")
 
 # ── imports ───────────────────────────────────────────────────────────────────
@@ -80,7 +80,7 @@ def _banner(live: bool, flash: bool = False) -> None:
     print(f"  Interval: {TRADE_INTERVAL}s  |  Trade size: {TRADE_SIZE_ETH} ETH")
     print(f"  Min profit: ${MIN_PROFIT_USD}  |  Gas budget: ${GAS_BUDGET_USD}")
     if flash:
-        print(f"  Flash borrow: {FLASH_LOAN_ETH} ETH  |  DRY_RUN={DRY_RUN}")
+        print(f"  Flash borrow: {FLASH_LOAN_AMOUNT_ETH} ETH  |  DRY_RUN={DRY_RUN}")
     print()
     if live or flash:
         print("  *** LIVE MODE — real funds will be used ***")
@@ -148,7 +148,7 @@ def run(live: bool = False, flash: bool = False) -> None:
         )
         bellman_ford    = BellmanFord({"trading": {"flash_loan_fee_bps": 9}})
         print(f"  [FLASH] NexusFlashReceiver at {os.getenv('FLASH_RECEIVER_ADDRESS', 'NOT SET')}")
-        print(f"  [FLASH] DRY_RUN={DRY_RUN}  borrow={FLASH_LOAN_ETH} ETH")
+        print(f"  [FLASH] DRY_RUN={DRY_RUN}  borrow={FLASH_LOAN_AMOUNT_ETH} ETH")
 
     elif live:
         from engine.execution.swap_executor import SwapExecutor
@@ -223,18 +223,18 @@ def run(live: bool = False, flash: bool = False) -> None:
 
             nexus_opp = bellman_ford.find_best(price_graph, min_profit_pct=0.05)
             if nexus_opp:
-                est_profit_usd = nexus_opp.expected_profit_pct / 100 * FLASH_LOAN_ETH * eth_price
+                est_profit_usd = nexus_opp.expected_profit_pct / 100 * FLASH_LOAN_AMOUNT_ETH * eth_price
                 print(f"  FLASH ARB: {nexus_opp}  est ${est_profit_usd:.2f}")
                 if est_profit_usd >= MIN_PROFIT_USD and risk.can_trade():
                     try:
                         receipt = flash_executor.execute(
                             nexus_opp,
-                            borrow_amount_eth=FLASH_LOAN_ETH,
+                            borrow_amount_eth=FLASH_LOAN_AMOUNT_ETH,
                             eth_price_usd=eth_price,
                             dry_run=DRY_RUN,
                         )
                         if receipt and hasattr(receipt, "tx_hash"):
-                            portfolio.log_trade("FLASH_ARB", eth_price, FLASH_LOAN_ETH, receipt.tx_hash)
+                            portfolio.log_trade("FLASH_ARB", eth_price, FLASH_LOAN_AMOUNT_ETH, receipt.tx_hash)
                             risk.record_trade()
                             print(f"  [FLASH] tx={receipt.tx_hash[:18]}…  success={receipt.success}")
                         elif DRY_RUN:
