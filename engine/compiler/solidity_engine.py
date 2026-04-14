@@ -297,7 +297,9 @@ class NexusSolidityEngine:
                 f"(status={receipt.status}, tx={tx_hash.hex()})"
             )
 
-        cost_eth = w3.from_wei(receipt.gasUsed * deploy_tx.get("gasPrice", base_tx.get("maxFeePerGas", 0)), "ether")
+        effective_gas_price = getattr(receipt, "effectiveGasPrice", None) or \
+            deploy_tx.get("gasPrice") or base_tx.get("maxFeePerGas", 0)
+        cost_eth = w3.from_wei(receipt.gasUsed * effective_gas_price, "ether")
         log.info(
             "[NEXUS] ✓ %s deployed at %s  (gas=%d, cost≈%.6f ETH)",
             spec.name, address, receipt.gasUsed, cost_eth,

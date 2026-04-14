@@ -137,7 +137,6 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
     // ── Events ────────────────────────────────────────────────────────────────
     event FlashExecuted(address indexed asset, uint256 borrowed, uint256 profit, uint256 steps);
     event ProfitWithdrawn(address indexed token, address indexed to, uint256 amount);
-    event MinProfitUpdated(uint256 oldValue, uint256 newValue);
 
     // ── Modifiers ─────────────────────────────────────────────────────────────
     modifier onlyOwner() {
