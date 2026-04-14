@@ -1,5 +1,5 @@
-from agents.web_agent_v2 import WebAgent
-from core.config_loader import Config
+from ..agents.web_agent_v2 import WebAgent
+from ..core.config_loader import Config
 import time
 
 
