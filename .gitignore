@@ -37,3 +37,5 @@ tx-engine/target/
 
 # Build output directory
 build/
+vault/*.json
+vault/test_*.json

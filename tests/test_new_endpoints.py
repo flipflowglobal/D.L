@@ -150,10 +150,17 @@ async def test_swarm_start_stop(client):
 # ── POST /registry/save and /registry/load ───────────────────────────────────
 
 async def test_registry_save(client):
-    # Paths must be inside the vault/ directory
-    r = await client.post("/registry/save?path=vault/test_registry.json")
-    assert r.status_code == 200
-    assert "saved" in r.json()
+    import uuid
+    # Paths must be inside the vault/ directory; use unique name to avoid collisions
+    test_file = f"vault/test_reg_{uuid.uuid4().hex[:8]}.json"
+    try:
+        r = await client.post(f"/registry/save?path={test_file}")
+        assert r.status_code == 200
+        assert "saved" in r.json()
+    finally:
+        full = os.path.join(os.path.dirname(os.path.dirname(__file__)), test_file)
+        if os.path.exists(full):
+            os.remove(full)
 
 
 async def test_registry_load_nonexistent(client):
