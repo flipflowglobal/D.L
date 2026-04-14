@@ -31,7 +31,9 @@ Strategy → Algorithm mapping
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -699,16 +701,16 @@ class AgentRegistry:
 
     def save_registry(self, path: str) -> None:
         """Persist all agent snapshots to a JSON file."""
-        import json, os
         snapshots = [a.snapshot() for a in self._agents.values()]
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        dir_name = os.path.dirname(os.path.abspath(path))
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
         with open(path, "w") as f:
             json.dump(snapshots, f, indent=2)
         logger.info("Registry saved %d agents to %s", len(snapshots), path)
 
     def load_registry(self, path: str) -> int:
         """Restore agents from a saved snapshot file. Returns count loaded."""
-        import json, os
         if not os.path.exists(path):
             return 0
         with open(path) as f:
