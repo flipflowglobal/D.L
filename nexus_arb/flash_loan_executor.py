@@ -42,7 +42,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from nexus_arb.algorithms.bellman_ford import ArbitrageResult
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +139,7 @@ class FlashLoanExecutor:
     def __init__(
         self,
         dry_run: bool = True,
-        min_profit_ratio: float = 1.0,
+        min_profit_ratio: float = 1.001,
         max_hops: int = 10,
     ) -> None:
         self.dry_run          = dry_run
@@ -151,7 +154,7 @@ class FlashLoanExecutor:
 
     # ── validation ────────────────────────────────────────────────────────────
 
-    def _validate_opportunity(self, opportunity: Any) -> None:
+    def _validate_opportunity(self, opportunity: "ArbitrageResult") -> None:
         """
         Assert that *opportunity* represents a structurally valid and
         economically plausible flash-loan arbitrage.
@@ -196,7 +199,7 @@ class FlashLoanExecutor:
 
     # ── swap step encoding ────────────────────────────────────────────────────
 
-    def _encode_swap_steps(self, opportunity: Any) -> List[SwapStep]:
+    def _encode_swap_steps(self, opportunity: "ArbitrageResult") -> List[SwapStep]:
         """
         Translate cycle_edges from an ArbitrageResult into an ordered list of
         SwapStep objects suitable for ABI-encoding inside the flash-loan callback.
@@ -229,7 +232,7 @@ class FlashLoanExecutor:
 
     # ── execution ─────────────────────────────────────────────────────────────
 
-    def execute(self, opportunity: Any) -> ExecutionReport:
+    def execute(self, opportunity: "ArbitrageResult") -> ExecutionReport:
         """
         Validate and execute (or simulate) a flash-loan arbitrage opportunity.
 
@@ -315,7 +318,7 @@ class FlashLoanExecutor:
         import os
 
         dry_run = os.getenv("FLASH_DRY_RUN", "true").lower() != "false"
-        min_profit_ratio = float(os.getenv("FLASH_MIN_PROFIT_RATIO", "1.0"))
+        min_profit_ratio = float(os.getenv("FLASH_MIN_PROFIT_RATIO", "1.001"))
         max_hops = int(os.getenv("FLASH_MAX_HOPS", "10"))
 
         logger.info(
