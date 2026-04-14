@@ -98,8 +98,6 @@ class LiquidityMonitor:
                     if prices:
                         return max(prices)
         except Exception:
-            pass
-
-        # Fallback: run sync get_price in executor (uses shared cache)
+            pass  # async DEX price fetch failed — fall through to shared cache executor
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.get_price)

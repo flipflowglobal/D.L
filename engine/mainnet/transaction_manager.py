@@ -46,6 +46,7 @@ Formal Specification
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -54,6 +55,8 @@ from typing import Optional
 from web3 import Web3
 
 from engine.mainnet.alchemy_client import AlchemyClient
+
+logger = logging.getLogger("aureon.tx_manager")
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
 
@@ -275,8 +278,8 @@ class TransactionManager:
                 receipt = self._w3.eth.get_transaction_receipt(h)
                 if receipt is not None:
                     return self._parse_receipt(h, receipt)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Receipt poll error: %s", exc)
             time.sleep(poll_interval)
 
         raise ConfirmationTimeout(
@@ -356,8 +359,8 @@ class TransactionManager:
                     return r
             except TransactionReverted:
                 raise
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Receipt poll error: %s", exc)
 
             # Bump gas if stuck
             if not bumped and time.monotonic() >= bump_at:
