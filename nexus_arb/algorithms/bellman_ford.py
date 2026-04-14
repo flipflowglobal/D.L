@@ -1,274 +1,241 @@
-# Copyright (c) 2026 Darcel King. All rights reserved.
-# SPDX-License-Identifier: BUSL-1.1
 """
-Bellman-Ford Arbitrage Detector.
+nexus_arb.algorithms.bellman_ford
+==================================
 
-Theory:
-  - Model token exchange rates as a directed weighted graph
-  - Edge (u, v) weight = -log(price_after_fee(u -> v))
-  - A negative-weight cycle corresponds to a profitable arbitrage cycle
-  - Bellman-Ford detects negative cycles in O(V*E) time
+Negative-cycle detection for multi-hop DEX arbitrage.
 
-Features:
-  - Multi-source Bellman-Ford (start from all nodes simultaneously)
-  - Path reconstruction to recover the actual trade route
-  - Profit calculation including flash loan premium
-  - Optimal entry size estimation via liquidity-constrained search
+Theory
+------
+Represent the token exchange graph as a directed weighted graph where:
+  - Nodes  = token addresses / symbols
+  - Edges  = (token_a, token_b, dex_name) with weight = -log(exchange_rate)
+
+A negative-weight cycle in this graph corresponds to a profitable
+arbitrage route: trading around the cycle returns more tokens than started.
+
+Bellman-Ford finds shortest paths from a source node, relaxing all edges
+V-1 times.  Any edge that can still be relaxed in the V-th pass lies on a
+negative cycle.
+
+Complexity
+----------
+  Time  : O(V · E)   where V = #tokens, E = #(token_pair, DEX) combinations
+  Space : O(V)       distance + predecessor arrays only
+
+Formal Specification
+---------------------
+  Preconditions:
+    - edges: list[tuple[str, str, float]]  (from_token, to_token, rate>0)
+    - source token must appear in the graph
+
+  Postconditions:
+    - Returns ArbitrageResult with has_cycle, cycle, profit_ratio
+    - profit_ratio > 1.0  ⟺  has_cycle is True
+    - cycle is a closed path (first == last) when has_cycle is True
+
+  Invariants:
+    - Weights stored as -log(rate); negative sum ⟺ positive product > 1
+    - Cycle traversal is deterministic given consistent edge ordering
 """
 
 from __future__ import annotations
 
-import logging
 import math
 from dataclasses import dataclass, field
-from typing import Optional
-
-import numpy as np
-
-log = logging.getLogger(__name__)
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass
-class PoolPrice:
-    """Represents a token-pair price on a specific DEX pool."""
-    token_in: str
-    token_out: str
-    price: float             # tokens_out / tokens_in (before fees)
-    price_after_fee: float   # tokens_out / tokens_in (after fees)
-    fee_bps: int = 30        # Fee in basis points (30 = 0.30%)
-    liquidity: float = 1.0   # Liquidity in ETH equivalent
-    dex: str = "unknown"     # DEX identifier
+class ArbitrageResult:
+    """Result of a Bellman-Ford negative-cycle search."""
+    has_cycle:    bool
+    cycle:        List[str]        # token path; first == last when has_cycle
+    profit_ratio: float            # product of exchange rates along cycle (>1 = profit)
+    cycle_edges:  List[Tuple[str, str, float]]  # (from, to, rate) tuples
 
 
-class PriceGraph:
+class BellmanFordArb:
     """
-    Directed weighted graph of token exchange rates.
-    Nodes = tokens, edges = DEX pools.
+    Multi-hop DEX arbitrage finder via Bellman-Ford negative-cycle detection.
+
+    Usage
+    -----
+    >>> arb = BellmanFordArb()
+    >>> arb.add_edge("WETH", "USDC", 2000.0, "uniswap_v3")
+    >>> arb.add_edge("USDC", "WETH", 0.0005005, "sushiswap")   # slightly better
+    >>> result = arb.find_arbitrage("WETH")
+    >>> result.has_cycle
+    True
+    >>> result.profit_ratio > 1.0
+    True
     """
 
     def __init__(self) -> None:
-        self._prices: dict[tuple[str, str], list[PoolPrice]] = {}
+        # edges: list of (from_node, to_node, log_weight, rate, dex)
+        self._edges: List[Tuple[str, str, float, float, str]] = []
+        self._nodes: set = set()
 
-    def add_price(self, pool: PoolPrice) -> None:
-        key = (pool.token_in, pool.token_out)
-        if key not in self._prices:
-            self._prices[key] = []
-        self._prices[key].append(pool)
+    # ── graph construction ────────────────────────────────────────────────────
 
-    def best_price(self, token_in: str, token_out: str) -> Optional[PoolPrice]:
-        """Return the pool with the best (highest) price for this pair."""
-        pools = self._prices.get((token_in, token_out), [])
-        if not pools:
-            return None
-        return max(pools, key=lambda p: p.price_after_fee)
-
-    def tokens(self) -> list[str]:
-        tokens: set[str] = set()
-        for t_in, t_out in self._prices:
-            tokens.add(t_in)
-            tokens.add(t_out)
-        return sorted(tokens)
-
-    def to_weight_matrix(self) -> tuple[list[str], dict]:
-        """
-        Convert graph to Bellman-Ford weight matrix.
-        Weight = -log(best_price_after_fee) for each edge.
-        """
-        tokens = self.tokens()
-        weights: dict[tuple[str, str], float] = {}
-
-        for (token_in, token_out), pools in self._prices.items():
-            best = max(pools, key=lambda p: p.price_after_fee)
-            if best.price_after_fee > 0:
-                weights[(token_in, token_out)] = -math.log(best.price_after_fee)
-
-        return tokens, weights
-
-
-@dataclass
-class ArbitrageOpportunity:
-    """A discovered profitable arbitrage cycle."""
-    cycle: list[str]
-    pools: list[PoolPrice]
-    gross_rate: float
-    net_rate: float
-    expected_profit_pct: float
-    max_input_eth: float
-    score: float = 0.0
-
-    @property
-    def is_profitable(self) -> bool:
-        return self.net_rate > 1.0
-
-    def __repr__(self) -> str:
-        path = " -> ".join(self.cycle)
-        return (f"ArbitrageOpportunity({path}, "
-                f"profit={self.expected_profit_pct:.4f}%, "
-                f"max_input={self.max_input_eth:.3f} ETH)")
-
-
-class BellmanFord:
-    """
-    Multi-source Bellman-Ford arbitrage detector.
-
-    Algorithm:
-      1. Build weight matrix: w(u,v) = -log(rate_after_fee)
-      2. Run V-1 relaxation passes
-      3. On V-th pass, any further relaxation = negative cycle
-      4. Reconstruct cycles using predecessor pointers
-      5. Verify cycles and calculate exact profit
-    """
-
-    def __init__(self, config: dict) -> None:
-        self.cfg = config
-        self.flash_loan_fee = config.get("trading", {}).get("flash_loan_fee_bps", 9) / 10_000
-
-    def detect(
+    def add_edge(
         self,
-        graph: PriceGraph,
-        min_profit_pct: float = 0.05
-    ) -> list[ArbitrageOpportunity]:
-        tokens, weights = graph.to_weight_matrix()
-        n = len(tokens)
-        if n < 2:
-            return []
+        from_token: str,
+        to_token: str,
+        rate: float,
+        dex: str = "unknown",
+    ) -> None:
+        """
+        Add a directed exchange edge.
 
-        tok_idx = {t: i for i, t in enumerate(tokens)}
-        dist: list[float] = [0.0] * n
-        pred: list[int]   = [-1] * n
+        Parameters
+        ----------
+        from_token : token being sold
+        to_token   : token being received
+        rate       : units of to_token per one from_token  (must be > 0)
+        dex        : exchange name (for result annotation)
+        """
+        if rate <= 0:
+            raise ValueError(f"Exchange rate must be positive, got {rate}")
+        log_w = -math.log(rate)    # negative because Bellman-Ford finds min-cost paths
+        self._edges.append((from_token, to_token, log_w, rate, dex))
+        self._nodes.add(from_token)
+        self._nodes.add(to_token)
 
-        for iteration in range(n - 1):
+    def add_price_matrix(self, prices: Dict[str, Dict[str, float]], dex: str = "matrix") -> None:
+        """
+        Convenience method: add all pairs from a {from: {to: rate}} matrix.
+
+        Example
+        -------
+        prices = {
+            "WETH": {"USDC": 2000.0, "DAI": 1999.5},
+            "USDC": {"WETH": 0.0005, "DAI": 0.999},
+            "DAI":  {"USDC": 1.001,  "WETH": 0.0005002},
+        }
+        """
+        for from_t, tos in prices.items():
+            for to_t, rate in tos.items():
+                if from_t != to_t and rate > 0:
+                    self.add_edge(from_t, to_t, rate, dex)
+
+    def clear(self) -> None:
+        """Remove all edges and nodes."""
+        self._edges.clear()
+        self._nodes.clear()
+
+    # ── core algorithm ────────────────────────────────────────────────────────
+
+    def find_arbitrage(self, source: Optional[str] = None) -> ArbitrageResult:
+        """
+        Run Bellman-Ford from `source` and detect negative-weight cycles.
+
+        If source is None, uses an arbitrary node from the graph.
+
+        Returns
+        -------
+        ArbitrageResult with has_cycle, cycle path, profit_ratio.
+        """
+        if not self._nodes:
+            return ArbitrageResult(False, [], 1.0, [])
+
+        nodes = list(self._nodes)
+        src   = source if source in self._nodes else nodes[0]
+
+        # Add a virtual source with zero-weight edges to every node so that
+        # all negative cycles are reachable regardless of connectivity.
+        INF = float("inf")
+        dist: Dict[str, float] = {n: INF for n in nodes}
+        pred: Dict[str, Optional[str]] = {n: None for n in nodes}
+        pred_edge: Dict[str, Optional[Tuple]] = {n: None for n in nodes}
+
+        dist[src] = 0.0
+
+        # Virtual zero-weight edges from src to every node
+        virtual_edges = [(src, n, 0.0, 1.0, "_virtual") for n in nodes if n != src]
+        all_edges = self._edges + virtual_edges
+
+        # V-1 relaxation passes
+        V = len(nodes)
+        for _ in range(V - 1):
             updated = False
-            for (u, v), w in weights.items():
-                if u not in tok_idx or v not in tok_idx:
-                    continue
-                ui, vi = tok_idx[u], tok_idx[v]
-                if dist[ui] + w < dist[vi] - 1e-12:
-                    dist[vi] = dist[ui] + w
-                    pred[vi] = ui
+            for (u, v, w, rate, dex) in all_edges:
+                if dist[u] < INF and dist[u] + w < dist[v] - 1e-12:
+                    dist[v] = dist[u] + w
+                    pred[v] = u
+                    pred_edge[v] = (u, v, rate, dex)
                     updated = True
             if not updated:
+                break   # early termination
+
+        # V-th pass: if any edge can still be relaxed, it is on a negative cycle
+        cycle_node: Optional[str] = None
+        for (u, v, w, rate, dex) in self._edges:   # exclude virtual
+            if dist[u] < INF and dist[u] + w < dist[v] - 1e-12:
+                cycle_node = v
                 break
 
-        neg_cycle_nodes: set[int] = set()
-        for (u, v), w in weights.items():
-            if u not in tok_idx or v not in tok_idx:
-                continue
-            ui, vi = tok_idx[u], tok_idx[v]
-            if dist[ui] + w < dist[vi] - 1e-12:
-                neg_cycle_nodes.add(vi)
+        if cycle_node is None:
+            return ArbitrageResult(False, [], 1.0, [])
 
-        if not neg_cycle_nodes:
-            return []
+        # Trace back to find the cycle (walk V steps to ensure we're inside).
+        # Guard against None predecessors — can occur on nodes only reachable via
+        # virtual zero-weight edges that never got a real predecessor recorded.
+        visited = {cycle_node}
+        node = cycle_node
+        for _ in range(V):
+            nxt = pred.get(node)
+            if nxt is None:
+                # Cannot trace further; report no exploitable cycle
+                return ArbitrageResult(False, [], 1.0, [])
+            node = nxt
+            if node in visited:
+                cycle_start = node
+                break
+            visited.add(node)
+        else:
+            cycle_start = node
 
-        opportunities: list[ArbitrageOpportunity] = []
-        seen_cycles: set[tuple] = set()
+        # Extract cycle path from cycle_start back to itself
+        cycle_path: List[str] = []
+        cycle_edge_list: List[Tuple[str, str, float]] = []
+        node = cycle_start
+        while True:
+            cycle_path.append(node)
+            e = pred_edge[node]
+            if e is not None:
+                cycle_edge_list.append((e[0], e[1], e[2]))
+            node = pred[node]
+            if node == cycle_start or node is None:
+                break
+        cycle_path.append(cycle_start)   # close the cycle
 
-        for node_idx in neg_cycle_nodes:
-            cycle_tokens = self._reconstruct_cycle(node_idx, pred, tokens, n)
-            if not cycle_tokens:
-                continue
+        cycle_path.reverse()
+        cycle_edge_list.reverse()
 
-            # Canonical key: rotate the cycle (excluding repeated last token)
-            # to start at the lexicographically smallest token, then tuple.
-            # This deduplicates cycles that start at different points but
-            # follow the same path, while preserving direction and pool identity.
-            inner = cycle_tokens[:-1]  # drop the repeated last token
-            min_idx = inner.index(min(inner))
-            canonical = tuple(inner[min_idx:] + inner[:min_idx])
-            if canonical in seen_cycles:
-                continue
-            seen_cycles.add(canonical)
+        # Compute true profit ratio (product of rates along cycle)
+        profit_ratio = 1.0
+        for (_, _, r) in cycle_edge_list:
+            profit_ratio *= r
 
-            opp = self._evaluate_cycle(cycle_tokens, graph)
-            if opp and opp.expected_profit_pct >= min_profit_pct:
-                opportunities.append(opp)
-
-        opportunities.sort(key=lambda o: o.score, reverse=True)
-        log.debug(f"Bellman-Ford: {len(opportunities)} opportunities found")
-        return opportunities
-
-    def _reconstruct_cycle(
-        self,
-        start: int,
-        pred: list[int],
-        tokens: list[str],
-        n: int
-    ) -> list[str]:
-        v = start
-        for _ in range(n):
-            v = pred[v]
-            if v == -1:
-                return []
-
-        cycle = []
-        visited = set()
-        u = v
-        while u not in visited:
-            visited.add(u)
-            cycle.append(tokens[u])
-            u = pred[u]
-            if u == -1:
-                return []
-
-        start_tok = tokens[u]
-        if start_tok not in cycle:
-            return []
-        idx = cycle.index(start_tok)
-        cycle = cycle[idx:]
-        cycle.append(start_tok)
-        cycle.reverse()
-        return cycle
-
-    def _evaluate_cycle(
-        self,
-        cycle: list[str],
-        graph: PriceGraph
-    ) -> Optional[ArbitrageOpportunity]:
-        if len(cycle) < 3:
-            return None
-
-        hops = list(zip(cycle[:-1], cycle[1:]))
-        pools_used: list[PoolPrice] = []
-        gross_rate = 1.0
-        net_rate   = 1.0
-        min_liquidity = float("inf")
-
-        for token_in, token_out in hops:
-            best = graph.best_price(token_in, token_out)
-            if best is None or best.price <= 0:
-                return None
-            pools_used.append(best)
-            gross_rate *= best.price
-            net_rate   *= best.price_after_fee
-            min_liquidity = min(min_liquidity, best.liquidity)
-
-        net_rate_after_loan = net_rate / (1 + self.flash_loan_fee)
-        profit_pct = (net_rate_after_loan - 1.0) * 100
-
-        if net_rate_after_loan <= 1.0:
-            return None
-
-        max_input_eth = min(min_liquidity * 0.1, 100.0)
-        score = profit_pct * math.sqrt(max_input_eth)
-
-        return ArbitrageOpportunity(
-            cycle=cycle,
-            pools=pools_used,
-            gross_rate=gross_rate,
-            net_rate=net_rate_after_loan,
-            expected_profit_pct=profit_pct,
-            max_input_eth=max_input_eth,
-            score=score
+        return ArbitrageResult(
+            has_cycle=profit_ratio > 1.0,
+            cycle=cycle_path,
+            profit_ratio=round(profit_ratio, 8),
+            cycle_edges=cycle_edge_list,
         )
 
-    def find_best(
-        self,
-        graph: PriceGraph,
-        min_profit_pct: float = 0.05
-    ) -> Optional[ArbitrageOpportunity]:
-        opps = self.detect(graph, min_profit_pct)
-        return opps[0] if opps else None
+    # ── multi-source search ───────────────────────────────────────────────────
 
-# Compatibility alias used by nexus_arb/algorithms/__init__.py
-BellmanFordArb = BellmanFord
+    def find_best_arbitrage(self) -> ArbitrageResult:
+        """
+        Run find_arbitrage from every node and return the highest-profit cycle.
+        Useful when the graph has multiple disconnected components.
+
+        Complexity: O(V² · E)  — use only on small graphs (<20 tokens).
+        """
+        best = ArbitrageResult(False, [], 1.0, [])
+        for node in list(self._nodes):
+            result = self.find_arbitrage(source=node)
+            if result.has_cycle and result.profit_ratio > best.profit_ratio:
+                best = result
+        return best

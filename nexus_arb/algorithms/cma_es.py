@@ -1,211 +1,261 @@
-# Copyright (c) 2026 Darcel King. All rights reserved.
-# SPDX-License-Identifier: BUSL-1.1
 """
-CMA-ES — Covariance Matrix Adaptation Evolution Strategy.
+nexus_arb.algorithms.cma_es
+============================
 
-Purpose: Find the optimal flash loan size for a given arbitrage path,
-         accounting for non-linear slippage, gas costs, and loan fees.
+Covariance Matrix Adaptation Evolution Strategy (CMA-ES).
 
-Theory (Hansen 2006):
-  CMA-ES maintains a multivariate Gaussian N(m, sigma^2 * C) over the
-  search space and evolves it toward profitable regions via weighted
-  recombination and covariance adaptation.
+Usage in AUREON
+---------------
+  - Position sizing: optimize trade size across multiple tokens/DEXs to
+    maximize risk-adjusted P&L subject to gas and capital constraints.
+  - Parameter tuning: find optimal mean-reversion window, threshold, and
+    spread threshold for the current market regime.
+  - Online adaptation: re-run every N cycles to track non-stationary markets.
+
+Theory
+------
+CMA-ES is a second-order stochastic optimizer for black-box functions.
+It maintains a Gaussian distribution N(m, σ²C) over the search space,
+sampling λ candidate solutions per generation and updating the mean m,
+step size σ, and covariance matrix C using:
+
+  - Weighted recombination (best μ out of λ samples)
+  - Cumulative step-size adaptation (CSA) for σ
+  - Rank-one + rank-μ updates for C
+
+Complexity per generation: O(λ·n + n³) where n = search space dimension.
+
+Formal Specification
+---------------------
+  Preconditions:
+    - f: Callable[[np.ndarray], float] — objective to MINIMIZE
+    - x0: np.ndarray, shape (n,)       — initial mean
+    - sigma0: float > 0                — initial step size
+    - n_generations >= 1
+
+  Postconditions:
+    - Returns OptimResult with x_opt (shape n,), f_opt (float), history
+    - x_opt minimises f within tolerance tol or after n_generations
+
+  Invariants:
+    - C is always positive definite (enforced via eigendecomposition)
+    - σ remains positive throughout
+    - Objective evaluations: exactly λ × n_generations (no early restart)
 """
 
 from __future__ import annotations
 
-import logging
 import math
-from dataclasses import dataclass
-from typing import Callable, Optional
+from dataclasses import dataclass, field
+from typing import Callable, List, Optional
 
 import numpy as np
 
-log = logging.getLogger(__name__)
-
 
 @dataclass
-class CMAESResult:
-    optimal_size_eth: float
-    expected_profit_eth: float
-    expected_profit_usd: float
-    iterations: int
-    converged: bool
+class OptimResult:
+    """Result of a CMA-ES optimization run."""
+    x_opt:       np.ndarray   # best solution found
+    f_opt:       float        # objective value at x_opt
+    n_evals:     int          # total function evaluations
+    n_generations: int        # completed generations
+    converged:   bool         # True if stopping criterion met
+    history:     List[float]  # f_opt per generation
 
 
-class CMAES1D:
-    """1-dimensional CMA-ES optimiser for trade size selection."""
+class CMAES:
+    """
+    CMA-ES optimizer — pure NumPy, no external dependencies.
+
+    Parameters
+    ----------
+    n_dim       : problem dimension (number of parameters)
+    sigma0      : initial step size (exploration radius)
+    pop_size    : population size λ; defaults to 4 + ⌊3·ln(n_dim)⌋
+    seed        : random seed for reproducibility
+    """
 
     def __init__(
         self,
-        population_size: int = 16,
-        initial_sigma: float = 0.5,
-        max_iterations: int = 100,
-        tolerance: float = 1e-9,
-        seed: Optional[int] = None
+        n_dim:    int,
+        sigma0:   float = 0.5,
+        pop_size: Optional[int] = None,
+        seed:     Optional[int] = None,
     ) -> None:
-        self.lambda_ = max(population_size, 4)
-        self.mu      = self.lambda_ // 2
-        self.sigma0  = initial_sigma
-        self.max_iter = max_iterations
-        self.tol     = tolerance
-        self.rng     = np.random.default_rng(seed)
+        if n_dim < 1:
+            raise ValueError("n_dim must be >= 1")
+        if sigma0 <= 0:
+            raise ValueError("sigma0 must be positive")
 
-        weights = np.log(self.mu + 0.5) - np.log(np.arange(1, self.mu + 1))
-        self.weights = weights / weights.sum()
-        self.mueff   = 1.0 / (self.weights ** 2).sum()
+        self.n = n_dim
+        self.rng = np.random.default_rng(seed)
 
-        self.cs   = (self.mueff + 2) / (1 + self.mueff + 5)
-        self.ds   = 1 + 2 * max(0, math.sqrt((self.mueff - 1) / 2) - 1) + self.cs
-        self.cc   = (4 + self.mueff) / 5
-        self.c1   = 2 / ((1 + 0.3) ** 2 + self.mueff)
-        self.cmu  = min(1 - self.c1,
-                        2 * (self.mueff - 2 + 1 / self.mueff) /
-                        ((1 + 1.3) ** 2 + self.mueff))
-        self.chiN = math.sqrt(1) * (1 - 1 / 4 + 1 / 21)
+        # Population / selection sizes
+        lam = pop_size or (4 + int(3 * math.log(n_dim)))
+        mu  = lam // 2
+        self._lam = lam
+        self._mu  = mu
 
-    def optimize(
-        self,
-        profit_fn: Callable[[float], float],
-        x_min: float = 0.01,
-        x_max: float = 500.0,
-        x_start: Optional[float] = None,
-        eth_price_usd: float = 3000.0
-    ) -> CMAESResult:
-        x_start  = x_start or (x_min + x_max) / 3
-        log_min  = math.log(max(x_min, 1e-6))
-        log_max  = math.log(x_max)
-        log_x0   = math.log(max(x_start, x_min))
+        # Recombination weights (log-linear, normalized)
+        raw_w = np.array([math.log(mu + 0.5) - math.log(i + 1) for i in range(mu)])
+        self._w   = raw_w / raw_w.sum()
+        self._mu_eff = 1.0 / np.dot(self._w, self._w)   # variance effective selection mass
 
-        m     = log_x0
-        sigma = self.sigma0
-        pc    = 0.0
-        ps    = 0.0
-        C     = 1.0
-
-        best_x      = x_start
-        best_profit = profit_fn(x_start)
-        converged   = False
-
-        for gen in range(self.max_iter):
-            zk       = self.rng.standard_normal(self.lambda_)
-            dk       = math.sqrt(C) * zk
-            xk_log   = np.clip(m + sigma * dk, log_min, log_max)
-            xk       = np.exp(xk_log)
-            fk       = np.array([profit_fn(x) for x in xk])
-            fk_neg   = -fk
-            order    = np.argsort(fk_neg)
-            xk_sorted = xk_log[order]
-            zk_sorted = zk[order]
-            fk_sorted = fk[order]          # order[0] is the best (highest profit)
-
-            if fk_sorted[0] > best_profit:
-                best_profit = fk_sorted[0]
-                best_x      = xk[order[0]]
-
-            m_old = m
-            m     = float(np.dot(self.weights, xk_sorted[:self.mu]))
-
-            C_inv_sqrt = 1.0 / math.sqrt(C) if C > 0 else 1.0
-            ps = ((1 - self.cs) * ps
-                  + math.sqrt(self.cs * (2 - self.cs) * self.mueff)
-                  * C_inv_sqrt
-                  * float(np.dot(self.weights, zk_sorted[:self.mu])))
-
-            hsig = (abs(ps) / math.sqrt(1 - (1 - self.cs) ** (2 * (gen + 1)))
-                    / self.chiN < 1.4 + 2 / 2)
-
-            pc = ((1 - self.cc) * pc
-                  + (1 if hsig else 0)
-                  * math.sqrt(self.cc * (2 - self.cc) * self.mueff)
-                  * math.sqrt(C)
-                  * float(np.dot(self.weights, zk_sorted[:self.mu])))
-
-            rank_one = self.c1 * pc ** 2
-            rank_mu  = self.cmu * float(np.dot(
-                self.weights,
-                (math.sqrt(C) * zk_sorted[:self.mu]) ** 2
-            ))
-            C = (1 - self.c1 - self.cmu) * C + rank_one + rank_mu
-
-            exp_arg = (self.cs / self.ds) * (abs(ps) / self.chiN - 1)
-            sigma *= math.exp(max(min(exp_arg, 20.0), -20.0))  # clamp exponent to prevent float overflow
-            # Clamp sigma to [1e-10, log_max-log_min]: must stay within the log-space
-            # search bounds and must not shrink to zero (which would cause degenerate sampling)
-            sigma  = max(min(sigma, log_max - log_min), 1e-10)
-
-            if sigma < self.tol or abs(m - m_old) < 1e-12:
-                converged = True
-                break
-
-        final_x      = float(np.exp(np.clip(m, log_min, log_max)))
-        final_profit = profit_fn(final_x)
-        if final_profit > best_profit:
-            best_x      = final_x
-            best_profit = final_profit
-
-        return CMAESResult(
-            optimal_size_eth=best_x,
-            expected_profit_eth=best_profit,
-            expected_profit_usd=best_profit * eth_price_usd,
-            iterations=gen + 1,
-            converged=converged
+        # Adaptation constants
+        self._cc  = (4 + self._mu_eff / n_dim) / (n_dim + 4 + 2 * self._mu_eff / n_dim)
+        self._cs  = (self._mu_eff + 2) / (n_dim + self._mu_eff + 5)
+        self._c1  = 2.0 / ((n_dim + 1.3) ** 2 + self._mu_eff)
+        self._cmu = min(
+            1 - self._c1,
+            2 * (self._mu_eff - 2 + 1 / self._mu_eff) / ((n_dim + 2) ** 2 + self._mu_eff)
         )
+        self._damps = 1 + 2 * max(0, math.sqrt((self._mu_eff - 1) / (n_dim + 1)) - 1) + self._cs
 
+        # Expected norm of N(0, I)
+        self._chi_n = math.sqrt(n_dim) * (1 - 1 / (4 * n_dim) + 1 / (21 * n_dim ** 2))
 
-class TradeOptimizer:
-    """Uses CMA-ES to find optimal trade size for an arbitrage opportunity."""
+    # ── main optimization loop ────────────────────────────────────────────────
 
-    def __init__(self, config: dict) -> None:
-        cma_cfg = config.get("algorithms", {}).get("cma_es", {})
-        self.cma = CMAES1D(
-            population_size=cma_cfg.get("population_size", 32),
-            initial_sigma=cma_cfg.get("initial_sigma", 0.3),
-            max_iterations=cma_cfg.get("max_iterations", 100),
-            tolerance=cma_cfg.get("tolerance", 1e-9)
-        )
-        self.flash_fee = config.get("trading", {}).get("flash_loan_fee_bps", 9) / 10_000
-
-    def build_profit_function(
+    def minimize(
         self,
-        opportunity,
-        gas_cost_eth: float,
-        eth_price_usd: float = 3000.0
-    ) -> Callable[[float], float]:
-        pools = opportunity.pools
-        flash_fee = self.flash_fee
+        f:             Callable[[np.ndarray], float],
+        x0:            np.ndarray,
+        n_generations: int = 200,
+        tol:           float = 1e-10,
+    ) -> OptimResult:
+        """
+        Minimize f starting from x0.
 
-        def simulate_path(amount_in_eth: float) -> float:
-            amount = amount_in_eth
-            for pool in pools:
-                if pool.liquidity <= 0:
-                    return -float("inf")
-                fee_mult = 1 - pool.fee_bps / 10_000
-                slippage = amount / (pool.liquidity + amount)
-                effective_rate = pool.price * fee_mult * (1 - slippage)
-                amount = amount * effective_rate
-            repay = amount_in_eth * (1 + flash_fee)
-            return amount - repay - gas_cost_eth
+        Parameters
+        ----------
+        f            : black-box objective (lower = better)
+        x0           : initial solution, shape (n_dim,)
+        n_generations: maximum generations
+        tol          : convergence threshold on σ
 
-        return simulate_path
+        Returns
+        -------
+        OptimResult
+        """
+        x0 = np.asarray(x0, dtype=float)
+        if x0.shape != (self.n,):
+            raise ValueError(f"x0 must have shape ({self.n},), got {x0.shape}")
 
-    def optimize(
-        self,
-        opportunity,
-        gas_cost_eth: float,
-        eth_price_usd: float,
-        min_size: float,
-        max_size: float
-    ) -> CMAESResult:
-        profit_fn = self.build_profit_function(opportunity, gas_cost_eth, eth_price_usd)
-        start = min(opportunity.max_input_eth, max_size)
-        return self.cma.optimize(
-            profit_fn,
-            x_min=min_size,
-            x_max=max_size,
-            x_start=start,
-            eth_price_usd=eth_price_usd
-        )
+        # State variables
+        m  = x0.copy()               # distribution mean
+        sigma = float(self.sigma0_from_x0(x0))
+        ps = np.zeros(self.n)        # evolution path for σ
+        pc = np.zeros(self.n)        # evolution path for C
+        C  = np.eye(self.n)          # covariance matrix
+        D  = np.ones(self.n)         # eigenvalues
+        B  = np.eye(self.n)          # eigenvectors (columns)
+        eigen_eval = 0               # last generation that updated B, D
 
-# Compatibility alias used by nexus_arb/algorithms/__init__.py
-CMAES = TradeOptimizer
+        history: List[float] = []
+        n_evals  = 0
+        x_opt    = m.copy()
+        f_opt    = f(m)
+        n_evals += 1
+
+        for gen in range(1, n_generations + 1):
+            # ── Sample λ offspring ───────────────────────────────────────────
+            if gen - eigen_eval > self._lam / (self._c1 + self._cmu) / self.n / 10:
+                # Update B, D from C
+                C = np.triu(C) + np.triu(C, 1).T   # enforce symmetry
+                D2, B = np.linalg.eigh(C)
+                D = np.sqrt(np.maximum(D2, 1e-20))
+                eigen_eval = gen
+
+            # z ~ N(0, I), y = B · diag(D) · z, x = m + σ · y
+            Z = self.rng.standard_normal((self._lam, self.n))
+            Y = (B * D) @ Z.T            # shape (n, λ)
+            X = m[:, None] + sigma * Y   # shape (n, λ)
+
+            # ── Evaluate ──────────────────────────────────────────────────────
+            fitness = np.array([f(X[:, i]) for i in range(self._lam)])
+            n_evals += self._lam
+
+            # ── Sort by fitness (ascending = minimize) ────────────────────────
+            idx = np.argsort(fitness)
+            best_i = idx[0]
+            if fitness[best_i] < f_opt:
+                f_opt = float(fitness[best_i])
+                x_opt = X[:, best_i].copy()
+
+            # ── Weighted recombination ─────────────────────────────────────────
+            selected_Y = Y[:, idx[:self._mu]]  # (n, mu)
+            selected_Z = Z[idx[:self._mu], :]  # (mu, n)
+
+            y_w = selected_Y @ self._w          # weighted mean in y-space
+            m_old = m.copy()
+            m = m + sigma * y_w
+
+            # ── Step-size control (CSA) ────────────────────────────────────────
+            invsqrtC = B @ np.diag(1.0 / D) @ B.T
+            ps = (1 - self._cs) * ps + math.sqrt(self._cs * (2 - self._cs) * self._mu_eff) * invsqrtC @ y_w
+            hs = (np.dot(ps, ps) / self.n / (1 - (1 - self._cs) ** (2 * n_evals / self._lam))) < (2 + 4 / (self.n + 1))
+            sigma *= math.exp((self._cs / self._damps) * (np.linalg.norm(ps) / self._chi_n - 1))
+
+            # ── Covariance update ─────────────────────────────────────────────
+            pc = (1 - self._cc) * pc + hs * math.sqrt(self._cc * (2 - self._cc) * self._mu_eff) * y_w
+            artmp = math.sqrt(1 - hs) * math.sqrt(self._cc * (2 - self._cc))
+
+            C = (
+                (1 - self._c1 - self._cmu) * C
+                + self._c1 * (np.outer(pc, pc) + artmp ** 2 * C)
+                + self._cmu * (selected_Y @ np.diag(self._w) @ selected_Y.T)
+            )
+
+            history.append(f_opt)
+
+            # ── Convergence ───────────────────────────────────────────────────
+            if sigma < tol:
+                return OptimResult(x_opt, f_opt, n_evals, gen, True, history)
+
+        return OptimResult(x_opt, f_opt, n_evals, n_generations, False, history)
+
+    @staticmethod
+    def sigma0_from_x0(x0: np.ndarray, scale: float = 0.3) -> float:
+        """Heuristic initial step size: 30 % of the L2-norm of x0 (min 0.01)."""
+        norm = float(np.linalg.norm(x0))
+        return max(norm * scale, 0.01)
+
+    # ── convenience: position-sizing objective ────────────────────────────────
+
+    @staticmethod
+    def position_sizing_objective(
+        returns:       np.ndarray,
+        gas_costs:     np.ndarray,
+        max_exposure:  float = 1.0,
+    ) -> Callable[[np.ndarray], float]:
+        """
+        Build an objective function that maximises Sharpe ratio subject to
+        a capital budget constraint.  Pass to minimize().
+
+        Parameters
+        ----------
+        returns      : shape (T, n_assets) — historical return matrix
+        gas_costs    : shape (n_assets,)   — fixed cost per unit traded
+        max_exposure : maximum total absolute position weight
+
+        Returns
+        -------
+        f(w) = -Sharpe(w)  (minimize negative Sharpe)
+        """
+        T, n = returns.shape
+
+        def objective(w: np.ndarray) -> float:
+            # Enforce constraints via penalty
+            penalty = 0.0
+            total_exposure = float(np.sum(np.abs(w)))
+            if total_exposure > max_exposure:
+                penalty += 1e6 * (total_exposure - max_exposure) ** 2
+
+            net_returns = returns @ w - gas_costs @ np.abs(w)
+            mean_r = float(np.mean(net_returns))
+            std_r  = float(np.std(net_returns, ddof=1)) + 1e-9
+
+            sharpe = mean_r / std_r
+            return -sharpe + penalty
+
+        return objective

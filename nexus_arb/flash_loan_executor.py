@@ -214,16 +214,16 @@ class FlashLoanExecutor:
         dry_run: bool = False,
     ):
         """
-        Convert an ArbitrageOpportunity into an on-chain flash loan transaction.
+        Convert an ArbitrageOpportunity (legacy) into an on-chain flash loan transaction.
 
         Args:
-            opportunity:       ArbitrageOpportunity from BellmanFord.detect()
+            opportunity:       ArbitrageOpportunity from BellmanFord.detect() (legacy)
             borrow_amount_eth: Amount of WETH to borrow (in ETH units)
-            eth_price_usd:     Current ETH price for gas cost calculation
+            eth_price_usd:     Current ETH price (informational only)
             dry_run:           If True, build and log but do NOT broadcast
 
         Returns:
-            TransactionReceipt (or None if dry_run=True)
+            TxReceipt (or None if dry_run=True)
         """
         # Validate opportunity structure before any on-chain work
         if not opportunity.cycle or len(opportunity.cycle) < 3:
@@ -237,18 +237,64 @@ class FlashLoanExecutor:
                 f"must equal cycle length - 1 ({len(opportunity.cycle) - 1})"
             )
 
+        return self._execute_cycle(
+            cycle=opportunity.cycle,
+            cycle_edges=None,
+            pools=opportunity.pools,
+            borrow_amount_eth=borrow_amount_eth,
+            dry_run=dry_run,
+        )
+
+    def execute_from_result(
+        self,
+        result,
+        borrow_amount_eth: float,
+        dry_run: bool = False,
+    ):
+        """
+        Execute a flash loan from a BellmanFordArb ArbitrageResult.
+
+        Args:
+            result:            ArbitrageResult from BellmanFordArb.find_best_arbitrage()
+            borrow_amount_eth: Amount of WETH to borrow (in ETH units)
+            dry_run:           If True, build and log but do NOT broadcast
+
+        Returns:
+            TxReceipt (or None if dry_run=True or no cycle detected)
+        """
+        if not result.has_cycle or len(result.cycle) < 3:
+            log.info("[FlashLoanExecutor] No profitable cycle in ArbitrageResult — skipping")
+            return None
+
+        return self._execute_cycle(
+            cycle=result.cycle,
+            cycle_edges=result.cycle_edges,
+            pools=None,
+            borrow_amount_eth=borrow_amount_eth,
+            dry_run=dry_run,
+        )
+
+    def _execute_cycle(
+        self,
+        cycle: list,
+        cycle_edges,
+        pools,
+        borrow_amount_eth: float,
+        dry_run: bool,
+    ):
+        """Shared execution path for both execute() and execute_from_result()."""
         # Check contract is not paused
         if self._is_paused():
             log.warning("[FlashLoanExecutor] Contract is paused — skipping")
             return None
 
         borrow_wei   = self.w3.to_wei(borrow_amount_eth, "ether")
-        borrow_token = _resolve_token_address(opportunity.cycle[0])
-        steps        = self._build_steps(opportunity, borrow_wei)
+        borrow_token = _resolve_token_address(cycle[0])
+        steps        = self._build_steps_from_cycle(cycle, cycle_edges, pools, borrow_wei)
         gas_limit    = self.BASE_GAS + self.GAS_PER_STEP * len(steps)
 
         log.info(
-            f"[FlashLoanExecutor] opportunity={opportunity} "
+            f"[FlashLoanExecutor] cycle={cycle} "
             f"borrow={borrow_amount_eth} ETH  steps={len(steps)}  gas={gas_limit:,}"
         )
 
@@ -271,34 +317,44 @@ class FlashLoanExecutor:
 
     # ── Step builder ──────────────────────────────────────────────────────────
 
-    def _build_steps(self, opportunity, borrow_wei: int) -> list[SwapStep]:
+    def _build_steps_from_cycle(
+        self,
+        cycle: list,
+        cycle_edges,        # list of (from, to, rate) tuples from BellmanFordArb, or None
+        pools,              # legacy PoolPrice list, or None
+        borrow_wei: int,
+    ) -> list[SwapStep]:
         """
-        Convert an ArbitrageOpportunity into a list of SwapStep objects.
+        Convert a token cycle into a list of SwapStep objects.
 
-        For each hop in the cycle:
-          1. Determine dexType from pool.dex name
-          2. Resolve token addresses
-          3. Build DEX-specific extraData
-          4. Apply slippage guard: minAmountOut = price_after_fee × amountIn × (1 - slippage)
+        Supports two input formats:
+          1. cycle_edges from BellmanFordArb (from, to, rate) — new API
+          2. pools list of PoolPrice objects — legacy API
         """
         steps: list[SwapStep] = []
-        hops  = list(zip(opportunity.cycle[:-1], opportunity.cycle[1:]))
-        amount_in = borrow_wei   # Start with the borrowed amount
+        hops  = list(zip(cycle[:-1], cycle[1:]))
 
         for i, (token_in_sym, token_out_sym) in enumerate(hops):
-            pool = opportunity.pools[i]
+            token_in  = _resolve_token_address(token_in_sym)
+            token_out = _resolve_token_address(token_out_sym)
 
-            dex_type   = _DEX_TYPE_MAP.get(pool.dex.lower(), DEX_UNISWAP_V3)
-            token_in   = _resolve_token_address(token_in_sym)
-            token_out  = _resolve_token_address(token_out_sym)
+            if pools is not None:
+                # Legacy path: use PoolPrice info
+                pool     = pools[i]
+                dex_type = _DEX_TYPE_MAP.get(pool.dex.lower(), DEX_UNISWAP_V3)
+                rate     = getattr(pool, "price_after_fee", 1.0)
+                extra    = self._build_extra_data_from_pool(dex_type, pool, token_in_sym, token_out_sym)
+            elif cycle_edges is not None and i < len(cycle_edges):
+                # New path: use cycle_edges (from, to, rate) from BellmanFordArb
+                _, _, rate = cycle_edges[i]
+                dex_type = DEX_UNISWAP_V3  # default DEX; no DEX metadata in new format
+                extra    = _encode_uniswap_extra(_DEX_DEFAULT_FEE.get("uniswap_v3", 500))
+            else:
+                rate     = 1.0
+                dex_type = DEX_UNISWAP_V3
+                extra    = _encode_uniswap_extra(500)
 
-            # Estimate output with slippage protection
-            expected_out_wei = int(amount_in * pool.price_after_fee)
-            min_out          = int(expected_out_wei * (1 - self.slippage))
-
-            extra_data = self._build_extra_data(
-                dex_type, pool, token_in_sym, token_out_sym
-            )
+            min_out = int(borrow_wei * rate * (1 - self.slippage)) if i == 0 else 0
 
             steps.append(SwapStep(
                 dex_type=dex_type,
@@ -306,13 +362,29 @@ class FlashLoanExecutor:
                 token_out=token_out,
                 amount_in=0,         # 0 = use full contract balance (chained swaps)
                 min_amount_out=min_out,
-                extra_data=extra_data,
+                extra_data=extra,
             ))
 
-            # Next step receives the estimated output of this step
-            amount_in = expected_out_wei
-
         return steps
+
+    def _build_steps(self, opportunity, borrow_wei: int) -> list[SwapStep]:
+        """Legacy step builder for ArbitrageOpportunity objects."""
+        return self._build_steps_from_cycle(
+            cycle=opportunity.cycle,
+            cycle_edges=None,
+            pools=opportunity.pools,
+            borrow_wei=borrow_wei,
+        )
+
+    def _build_extra_data_from_pool(
+        self,
+        dex_type: int,
+        pool,
+        token_in_sym: str,
+        token_out_sym: str,
+    ) -> bytes:
+        """Build DEX-specific ABI-encoded extra data for a swap step."""
+        return self._build_extra_data(dex_type, pool, token_in_sym, token_out_sym)
 
     def _build_extra_data(
         self,

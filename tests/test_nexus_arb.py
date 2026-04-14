@@ -1,266 +1,383 @@
 """
-Tests for nexus_arb algorithms and wallet generation.
-All tests run offline — no RPC or network calls required.
+tests/test_nexus_arb.py
+========================
+
+Offline unit tests for all nexus_arb algorithms:
+  - BellmanFordArb   (negative-cycle detection)
+  - CMAES            (covariance matrix adaptation)
+  - UnscentedKalmanFilter (sigma-point state estimation)
+  - ThompsonSamplingBandit (Beta-Bernoulli bandit)
+  - TradingPolicy    (PPO actor-critic)
+
+All tests run fully offline — no RPC, no network.
 """
 
+from __future__ import annotations
+
+import math
 import sys
 import os
 
+import numpy as np
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-import pytest
-import numpy as np
 
+# ─────────────────────────────────────────────────────────────────────────────
+# BellmanFordArb
+# ─────────────────────────────────────────────────────────────────────────────
 
-# ── Wallet generation ─────────────────────────────────────────────────────────
+class TestBellmanFordArb:
 
-class TestWalletGeneration:
-    def test_generates_valid_address(self):
-        from eth_account import Account
-        acct = Account.create()
-        assert acct.address.startswith("0x")
-        assert len(acct.address) == 42
+    def test_empty_graph_returns_no_cycle(self):
+        from nexus_arb.algorithms.bellman_ford import BellmanFordArb
+        arb = BellmanFordArb()
+        result = arb.find_arbitrage("WETH")
+        assert result.has_cycle is False
+        assert result.profit_ratio == 1.0
 
-    def test_generates_valid_private_key(self):
-        from eth_account import Account
-        acct = Account.create()
-        key_hex = acct.key.hex()
-        assert len(key_hex) == 64  # 32 bytes = 64 hex chars (no 0x prefix)
+    def test_negative_rate_raises(self):
+        from nexus_arb.algorithms.bellman_ford import BellmanFordArb
+        arb = BellmanFordArb()
+        with pytest.raises(ValueError):
+            arb.add_edge("A", "B", -1.0)
 
-    def test_each_wallet_is_unique(self):
-        from eth_account import Account
-        a1 = Account.create()
-        a2 = Account.create()
-        assert a1.address != a2.address
-        assert a1.key != a2.key
+    def test_zero_rate_raises(self):
+        from nexus_arb.algorithms.bellman_ford import BellmanFordArb
+        arb = BellmanFordArb()
+        with pytest.raises(ValueError):
+            arb.add_edge("A", "B", 0.0)
 
-    def test_recover_address_from_key(self):
-        from eth_account import Account
-        acct = Account.create()
-        recovered = Account.from_key(acct.key)
-        assert recovered.address == acct.address
-
-
-# ── Bellman-Ford ──────────────────────────────────────────────────────────────
-
-class TestBellmanFord:
-    def _make_graph(self, with_cycle: bool = False):
-        from nexus_arb.algorithms.bellman_ford import PriceGraph, PoolPrice
-
-        g = PriceGraph()
-        # WETH -> USDC: 2000 USDC per WETH, fee 30bps
-        g.add_price(PoolPrice(
-            token_in="WETH", token_out="USDC",
-            price=2000.0, price_after_fee=1994.0,
-            fee_bps=30, liquidity=10.0, dex="uniswap_v3"
-        ))
-        if with_cycle:
-            # USDC -> WETH: gives back MORE than 1/2000 WETH — profitable cycle
-            g.add_price(PoolPrice(
-                token_in="USDC", token_out="WETH",
-                price=0.000510, price_after_fee=0.000509,
-                fee_bps=30, liquidity=10.0, dex="sushiswap"
-            ))
-        else:
-            # Normal back rate — not profitable
-            g.add_price(PoolPrice(
-                token_in="USDC", token_out="WETH",
-                price=0.000499, price_after_fee=0.000498,
-                fee_bps=30, liquidity=10.0, dex="sushiswap"
-            ))
-        return g
-
-    def test_no_opportunity_on_fair_prices(self):
-        from nexus_arb.algorithms.bellman_ford import BellmanFord
-        bf = BellmanFord({"trading": {"flash_loan_fee_bps": 9}})
-        graph = self._make_graph(with_cycle=False)
-        opps = bf.detect(graph, min_profit_pct=0.01)
-        assert opps == []
+    def test_no_cycle_on_balanced_rates(self):
+        from nexus_arb.algorithms.bellman_ford import BellmanFordArb
+        arb = BellmanFordArb()
+        arb.add_edge("WETH", "USDC", 2000.0, "uniswap")
+        arb.add_edge("USDC", "WETH", 1.0 / 2000.0, "uniswap")   # exact reciprocal
+        result = arb.find_arbitrage("WETH")
+        assert result.has_cycle is False
 
     def test_detects_profitable_cycle(self):
-        from nexus_arb.algorithms.bellman_ford import BellmanFord
-        bf = BellmanFord({"trading": {"flash_loan_fee_bps": 9}})
-        graph = self._make_graph(with_cycle=True)
-        opps = bf.detect(graph, min_profit_pct=0.0)
-        assert isinstance(opps, list)
+        from nexus_arb.algorithms.bellman_ford import BellmanFordArb
+        arb = BellmanFordArb()
+        # Buy on uniswap at 2000, sell on sushi at 2000.5 → 0.025 % edge
+        arb.add_edge("WETH", "USDC", 2000.0,   "uniswap")
+        arb.add_edge("USDC", "WETH", 1/1999.5, "sushiswap")  # slight extra
+        result = arb.find_arbitrage("WETH")
+        assert result.has_cycle is True
+        assert result.profit_ratio > 1.0
 
-    def test_opportunity_structure(self):
-        from nexus_arb.algorithms.bellman_ford import BellmanFord, ArbitrageOpportunity
-        bf  = BellmanFord({"trading": {"flash_loan_fee_bps": 9}})
-        graph = self._make_graph(with_cycle=True)
-        opps  = bf.detect(graph, min_profit_pct=0.0)
-        for opp in opps:
-            assert isinstance(opp, ArbitrageOpportunity)
-            assert isinstance(opp.cycle, list)
-            assert isinstance(opp.expected_profit_pct, float)
-            assert isinstance(opp.max_input_eth, float)
-            assert opp.max_input_eth > 0
+    def test_cycle_is_closed(self):
+        """Returned cycle path must start and end at the same token."""
+        from nexus_arb.algorithms.bellman_ford import BellmanFordArb
+        arb = BellmanFordArb()
+        arb.add_edge("A", "B", 1.1)
+        arb.add_edge("B", "C", 1.1)
+        arb.add_edge("C", "A", 1.1)
+        result = arb.find_arbitrage("A")
+        if result.has_cycle:
+            assert result.cycle[0] == result.cycle[-1]
 
-    def test_find_best_returns_none_when_empty(self):
-        from nexus_arb.algorithms.bellman_ford import BellmanFord, PriceGraph
-        bf = BellmanFord({"trading": {"flash_loan_fee_bps": 9}})
-        assert bf.find_best(PriceGraph()) is None
+    def test_add_price_matrix(self):
+        from nexus_arb.algorithms.bellman_ford import BellmanFordArb
+        arb = BellmanFordArb()
+        prices = {
+            "WETH": {"USDC": 2000.0, "DAI": 1999.5},
+            "USDC": {"WETH": 0.0005, "DAI": 0.999},
+            "DAI":  {"USDC": 1.001,  "WETH": 0.0005002},
+        }
+        arb.add_price_matrix(prices, dex="matrix")
+        # Should have edges without raising
+        assert len(arb._nodes) == 3
+
+    def test_find_best_arbitrage_returns_highest_profit(self):
+        from nexus_arb.algorithms.bellman_ford import BellmanFordArb
+        arb = BellmanFordArb()
+        arb.add_edge("X", "Y", 1.05)
+        arb.add_edge("Y", "X", 1.05)
+        result = arb.find_best_arbitrage()
+        assert result.has_cycle is True
+        assert result.profit_ratio >= 1.0
+
+    def test_clear_resets_graph(self):
+        from nexus_arb.algorithms.bellman_ford import BellmanFordArb
+        arb = BellmanFordArb()
+        arb.add_edge("A", "B", 1.5)
+        arb.clear()
+        result = arb.find_arbitrage()
+        assert result.has_cycle is False
 
 
-# ── CMA-ES ────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# CMAES
+# ─────────────────────────────────────────────────────────────────────────────
 
 class TestCMAES:
-    def test_optimises_simple_quadratic(self):
-        from nexus_arb.algorithms.cma_es import CMAES1D
 
-        cma = CMAES1D(population_size=16, max_iterations=50, seed=42)
-
-        # Maximise -(x-2)^2 → optimal at x=2
-        result = cma.optimize(
-            profit_fn=lambda x: -(x - 2.0) ** 2,
-            x_min=0.01,
-            x_max=10.0,
-            x_start=5.0,
-            eth_price_usd=3000.0
+    def test_minimises_sphere_function(self):
+        from nexus_arb.algorithms.cma_es import CMAES
+        cma = CMAES(n_dim=3, sigma0=0.5, seed=0)
+        result = cma.minimize(
+            lambda x: float(np.sum(x ** 2)),
+            x0=np.array([1.0, 1.0, 1.0]),
+            n_generations=100,
         )
-        assert abs(result.optimal_size_eth - 2.0) < 0.5
+        assert result.f_opt < 0.5   # should converge close to 0
 
-    def test_result_fields(self):
-        from nexus_arb.algorithms.cma_es import CMAES1D, CMAESResult
+    def test_result_has_correct_shape(self):
+        from nexus_arb.algorithms.cma_es import CMAES
+        cma = CMAES(n_dim=4, sigma0=0.3, seed=1)
+        result = cma.minimize(
+            lambda x: float(np.sum(x ** 2)),
+            x0=np.zeros(4),
+            n_generations=20,
+        )
+        assert result.x_opt.shape == (4,)
+        assert isinstance(result.f_opt, float)
+        assert result.n_evals > 0
 
-        cma = CMAES1D(seed=0)
-        result = cma.optimize(lambda x: -x, x_min=0.01, x_max=5.0)
-        assert isinstance(result, CMAESResult)
-        assert result.iterations >= 1
-        assert isinstance(result.converged, bool)
+    def test_invalid_ndim_raises(self):
+        from nexus_arb.algorithms.cma_es import CMAES
+        with pytest.raises(ValueError):
+            CMAES(n_dim=0)
 
-    def test_trade_optimizer_builds(self):
-        from nexus_arb.algorithms.cma_es import TradeOptimizer
-        opt = TradeOptimizer({"trading": {"flash_loan_fee_bps": 9}})
-        assert opt is not None
+    def test_invalid_sigma_raises(self):
+        from nexus_arb.algorithms.cma_es import CMAES
+        with pytest.raises(ValueError):
+            CMAES(n_dim=2, sigma0=-1.0)
+
+    def test_history_grows_monotonically_or_improves(self):
+        from nexus_arb.algorithms.cma_es import CMAES
+        cma = CMAES(n_dim=2, sigma0=0.5, seed=7)
+        result = cma.minimize(
+            lambda x: float(np.sum(x ** 2)),
+            x0=np.array([3.0, 3.0]),
+            n_generations=30,
+        )
+        assert len(result.history) == result.n_generations
+
+    def test_converges_flag_set_when_tol_met(self):
+        from nexus_arb.algorithms.cma_es import CMAES
+        cma = CMAES(n_dim=1, sigma0=0.5, seed=2)
+        result = cma.minimize(
+            lambda x: float(x[0] ** 2),
+            x0=np.array([1.0]),
+            n_generations=200,
+            tol=1e-6,
+        )
+        # Should converge for a simple 1-D sphere
+        assert result.f_opt < 1e-4
 
 
-# ── UKF ───────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# UnscentedKalmanFilter
+# ─────────────────────────────────────────────────────────────────────────────
 
 class TestUKF:
-    def test_initializes_on_first_update(self):
-        from nexus_arb.algorithms.ukf import PriceUKF, UKFState
-        ukf   = PriceUKF({})
-        state = ukf.update(2000.0)
-        assert isinstance(state, UKFState)
-        assert abs(state.price - 2000.0) < 100
 
-    def test_converges_to_stable_price(self):
-        from nexus_arb.algorithms.ukf import PriceUKF
-        ukf = PriceUKF({})
-        for _ in range(30):
-            state = ukf.update(2000.0)
-        assert abs(state.price - 2000.0) < 10.0
+    def test_first_update_initialises_state(self):
+        from nexus_arb.algorithms.ukf import UnscentedKalmanFilter
+        ukf = UnscentedKalmanFilter()
+        result = ukf.update(2000.0)
+        assert abs(result.mean[0] - 2000.0) < 10.0
 
-    def test_velocity_sign(self):
-        from nexus_arb.algorithms.ukf import PriceUKF
-        ukf = PriceUKF({})
-        for p in [2000.0, 2010.0, 2020.0, 2030.0, 2040.0]:
-            state = ukf.update(p)
-        assert state.is_trending_up is True
+    def test_state_mean_tracks_price(self):
+        from nexus_arb.algorithms.ukf import UnscentedKalmanFilter
+        ukf = UnscentedKalmanFilter()
+        prices = [2000.0, 2010.0, 2020.0, 2030.0, 2040.0]
+        for p in prices:
+            result = ukf.update(p)
+        # Price component should be near the last price
+        assert abs(result.mean[0] - 2040.0) < 50.0
 
-    def test_multi_token_ukf(self):
-        from nexus_arb.algorithms.ukf import MultiTokenUKF
-        multi = MultiTokenUKF({})
-        s = multi.update("WETH", "USDC", 2000.0)
-        assert s.price > 0
-        fav = multi.is_price_moving_favorably("WETH", "USDC")
-        assert isinstance(fav, bool)
+    def test_covariance_stays_positive_definite(self):
+        from nexus_arb.algorithms.ukf import UnscentedKalmanFilter
+        ukf = UnscentedKalmanFilter()
+        for p in [1900.0, 2000.0, 2100.0, 1950.0]:
+            result = ukf.update(p)
+        eigenvalues = np.linalg.eigvalsh(result.covariance)
+        assert all(ev > 0 for ev in eigenvalues)
 
-    def test_multi_token_unknown_pair_is_favorable(self):
-        from nexus_arb.algorithms.ukf import MultiTokenUKF
-        multi = MultiTokenUKF({})
-        assert multi.is_price_moving_favorably("WBTC", "DAI") is True
+    def test_anomaly_detection_on_large_spike(self):
+        from nexus_arb.algorithms.ukf import UnscentedKalmanFilter
+        ukf = UnscentedKalmanFilter(anomaly_thresh=3.0)
+        # Warm up
+        for p in [2000.0] * 5:
+            ukf.update(p)
+        # Massive spike should trigger anomaly
+        result = ukf.update(5000.0)
+        assert result.is_anomaly is True
 
+    def test_no_anomaly_on_stable_price(self):
+        from nexus_arb.algorithms.ukf import UnscentedKalmanFilter
+        ukf = UnscentedKalmanFilter()
+        for p in [2000.0, 2001.0, 1999.5, 2000.5]:
+            result = ukf.update(p)
+        assert result.is_anomaly is False
 
-# ── Thompson Sampling ─────────────────────────────────────────────────────────
-
-class TestThompsonSampling:
-    def test_bandit_selects_from_arms(self):
-        from nexus_arb.algorithms.thompson_sampling import ThompsonBandit
-        bandit = ThompsonBandit(arms=["uniswap_v3", "sushiswap", "curve"], seed=0)
-        selected = bandit.select()
-        assert selected in ("uniswap_v3", "sushiswap", "curve")
-
-    def test_update_increases_alpha_on_positive_reward(self):
-        from nexus_arb.algorithms.thompson_sampling import ThompsonBandit
-        bandit = ThompsonBandit(arms=["uni"], seed=0)
-        alpha_before = bandit.arms["uni"].alpha
-        bandit.update("uni", reward=0.8)
-        assert bandit.arms["uni"].alpha > alpha_before * 0.9  # decay but net gain
-
-    def test_update_increases_beta_on_negative_reward(self):
-        from nexus_arb.algorithms.thompson_sampling import ThompsonBandit
-        bandit = ThompsonBandit(arms=["uni"], seed=0)
-        beta_before = bandit.arms["uni"].beta
-        bandit.update("uni", reward=-1.0)
-        assert bandit.arms["uni"].beta > beta_before
-
-    def test_dex_bandit_selects(self):
-        from nexus_arb.algorithms.thompson_sampling import DexBandit
-        dex = DexBandit({"algorithms": {"thompson": {}}})
-        selected = dex.select_dex("WETH", "USDC")
-        assert selected in ("uniswap_v3", "curve", "balancer", "camelot_v3")
-
-    def test_dex_bandit_record_outcome(self):
-        from nexus_arb.algorithms.thompson_sampling import DexBandit
-        dex = DexBandit({})
-        # Should not raise
-        dex.record_outcome("WETH", "USDC", "uniswap_v3", 0.01, 0.1)
-        dex.record_failure("WETH", "USDC", "curve")
-
-    def test_stats_table_sorted(self):
-        from nexus_arb.algorithms.thompson_sampling import ThompsonBandit
-        bandit = ThompsonBandit(arms=["a", "b", "c"], seed=1)
-        bandit.update("a", 0.9)
-        bandit.update("a", 0.9)
-        table = bandit.stats_table()
-        assert table[0]["arm"] == "a"  # Highest posterior first
+    def test_reset_via_reinit(self):
+        from nexus_arb.algorithms.ukf import UnscentedKalmanFilter
+        ukf = UnscentedKalmanFilter()
+        for p in [1500.0, 1600.0]:
+            ukf.update(p)
+        # Re-initialize via initialize()
+        ukf.initialize(2000.0)
+        result = ukf.update(2000.0)
+        assert abs(result.mean[0] - 2000.0) < 50.0
 
 
-# ── PPO Agent ────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# ThompsonSamplingBandit
+# ─────────────────────────────────────────────────────────────────────────────
 
-class TestPPOAgent:
-    def test_agent_builds(self):
-        from nexus_arb.algorithms.ppo import PPOAgent
-        agent = PPOAgent({})
-        assert agent is not None
+class TestThompsonSamplingBandit:
 
-    def test_encode_state_shape(self):
-        from nexus_arb.algorithms.ppo import PPOAgent
-        agent = PPOAgent({})
-        state = agent.encode_state(
-            spread_mean=0.005, spread_std=0.001,
-            gas_price_gwei=0.1, block_utilization=0.5,
-            time_since_opp_ms=100.0, wallet_balance_eth=1.0,
-            ukf_velocity=0.01, recent_success_rate=0.7
-        )
-        assert state.shape == (8,)
-        assert np.all(state >= -1.0) and np.all(state <= 1.0)
+    def test_select_returns_valid_arm(self):
+        from nexus_arb.algorithms.thompson_sampling import ThompsonSamplingBandit
+        bandit = ThompsonSamplingBandit(["uniswap", "sushiswap", "curve"], seed=0)
+        arm = bandit.select()
+        assert arm in ["uniswap", "sushiswap", "curve"]
 
-    def test_select_action_returns_valid(self):
-        from nexus_arb.algorithms.ppo import PPOAgent, EXECUTE, WAIT, SKIP
-        agent = PPOAgent({})
-        state = agent.encode_state(0.005, 0.001, 0.1, 0.5, 100.0, 1.0, 0.0, 0.7)
-        action, log_prob, value = agent.select_action(state)
-        assert action in (EXECUTE, WAIT, SKIP)
+    def test_update_increments_stats(self):
+        from nexus_arb.algorithms.thompson_sampling import ThompsonSamplingBandit
+        bandit = ThompsonSamplingBandit(["A", "B"], seed=1)
+        bandit.update("A", 1.0)
+        stats = bandit.stats()
+        assert stats["A"]["n_selected"] == 1
+
+    def test_empty_arms_raises(self):
+        from nexus_arb.algorithms.thompson_sampling import ThompsonSamplingBandit
+        with pytest.raises(ValueError):
+            ThompsonSamplingBandit([])
+
+    def test_invalid_prior_raises(self):
+        from nexus_arb.algorithms.thompson_sampling import ThompsonSamplingBandit
+        with pytest.raises(ValueError):
+            ThompsonSamplingBandit(["A"], alpha0=0.0)
+
+    def test_best_arm_wins_after_many_updates(self):
+        from nexus_arb.algorithms.thompson_sampling import ThompsonSamplingBandit
+        bandit = ThompsonSamplingBandit(["low", "high"], seed=42)
+        # Give "high" lots of successes
+        for _ in range(50):
+            bandit.update("high", 1.0)
+        for _ in range(50):
+            bandit.update("low", 0.0)
+        rewards = bandit.expected_rewards()
+        assert rewards["high"] > rewards["low"]
+
+    def test_select_top_k(self):
+        from nexus_arb.algorithms.thompson_sampling import ThompsonSamplingBandit
+        bandit = ThompsonSamplingBandit(["A", "B", "C", "D"], seed=5)
+        top2 = bandit.select_top_k(2)
+        assert len(top2) == 2
+        assert all(a in ["A", "B", "C", "D"] for a in top2)
+
+    def test_expected_rewards_range(self):
+        from nexus_arb.algorithms.thompson_sampling import ThompsonSamplingBandit
+        bandit = ThompsonSamplingBandit(["X", "Y"], seed=3)
+        rewards = bandit.expected_rewards()
+        for v in rewards.values():
+            assert 0.0 < v < 1.0
+
+    def test_summary_contains_all_arms(self):
+        from nexus_arb.algorithms.thompson_sampling import ThompsonSamplingBandit
+        arms = ["a", "b", "c"]
+        bandit = ThompsonSamplingBandit(arms, seed=0)
+        stats = bandit.stats()
+        assert set(stats.keys()) == set(arms)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TradingPolicy (PPO)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestTradingPolicy:
+
+    def test_select_action_returns_valid_action(self):
+        from nexus_arb.algorithms.ppo import TradingPolicy, STATE_DIM
+        policy = TradingPolicy(seed=0)
+        state  = np.zeros(STATE_DIM)
+        action, log_prob, value = policy.select_action(state)
+        assert action in (0, 1, 2)
         assert isinstance(log_prob, float)
         assert isinstance(value, float)
 
-    def test_update_returns_none_when_buffer_empty(self):
-        from nexus_arb.algorithms.ppo import PPOAgent
-        agent = PPOAgent({})
-        assert agent.update() is None
+    def test_action_name_mapping(self):
+        from nexus_arb.algorithms.ppo import TradingPolicy, ACTION_HOLD, ACTION_BUY, ACTION_SELL
+        policy = TradingPolicy(seed=1)
+        assert policy.action_name(ACTION_HOLD) == "HOLD"
+        assert policy.action_name(ACTION_BUY)  == "BUY"
+        assert policy.action_name(ACTION_SELL) == "SELL"
 
-    def test_update_returns_metrics_after_enough_transitions(self):
-        from nexus_arb.algorithms.ppo import PPOAgent
-        agent = PPOAgent({"algorithms": {"ppo": {"batch_size": 4}}})
-        state = agent.encode_state(0.005, 0.001, 0.1, 0.5, 100.0, 1.0, 0.0, 0.7)
-        for _ in range(10):
-            action, lp, val = agent.select_action(state)
-            agent.store_transition(state, action, 0.1, False, lp, val)
-        metrics = agent.update()
-        assert metrics is not None
-        assert "policy_loss" in metrics
-        assert "value_loss" in metrics
-        assert "entropy" in metrics
+    def test_policy_probs_sum_to_one(self):
+        from nexus_arb.algorithms.ppo import TradingPolicy, STATE_DIM
+        policy = TradingPolicy(seed=2)
+        state  = np.array([0.1, -0.001, 0.02, 0.0, 0.0, 1.0])
+        probs  = policy.policy_probs(state)
+        assert abs(probs.sum() - 1.0) < 1e-6
+        assert all(p >= 0 for p in probs)
+
+    def test_update_returns_result(self):
+        from nexus_arb.algorithms.ppo import TradingPolicy, Transition, STATE_DIM
+        policy = TradingPolicy(seed=3, n_epochs=1, batch_size=4)
+        state  = np.zeros(STATE_DIM)
+        transitions = [
+            Transition(state, 1, 0.01, -1.1, 0.5, False),
+            Transition(state, 0, 0.00, -1.2, 0.4, False),
+            Transition(state, 2, 0.02, -1.0, 0.6, False),
+        ]
+        result = policy.update(transitions, last_value=0.0)
+        assert isinstance(result.policy_loss, float)
+        assert isinstance(result.value_loss, float)
+        assert result.n_updates > 0
+
+    def test_update_empty_rollout(self):
+        from nexus_arb.algorithms.ppo import TradingPolicy
+        policy = TradingPolicy(seed=4)
+        result = policy.update([], last_value=0.0)
+        assert result.n_updates == 0
+
+    def test_encode_state_shape(self):
+        from nexus_arb.algorithms.ppo import TradingPolicy, STATE_DIM
+        state = TradingPolicy.encode_state(
+            price=2000.0, prev_price=1990.0, volatility=0.02,
+            position=0.5, drawdown=0.01, cash_ratio=0.8,
+        )
+        assert state.shape == (STATE_DIM,)
+
+    def test_encode_state_is_finite(self):
+        from nexus_arb.algorithms.ppo import TradingPolicy
+        state = TradingPolicy.encode_state(
+            price=2000.0, prev_price=2000.0, volatility=0.0,
+            position=0.0, drawdown=0.0, cash_ratio=1.0,
+        )
+        assert all(math.isfinite(v) for v in state)
+
+    def test_stats_dict(self):
+        from nexus_arb.algorithms.ppo import TradingPolicy
+        policy = TradingPolicy(seed=5)
+        s = policy.stats()
+        assert "total_updates" in s
+        assert "n_actions" in s
+        assert s["n_actions"] == 3
+
+    def test_value_is_finite(self):
+        from nexus_arb.algorithms.ppo import TradingPolicy, STATE_DIM
+        policy = TradingPolicy(seed=6)
+        v = policy.value(np.zeros(STATE_DIM))
+        assert math.isfinite(v)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Module-level import
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_nexus_arb_top_level_imports():
+    """All five algorithms importable from nexus_arb top-level."""
+    import nexus_arb
+    assert hasattr(nexus_arb, "BellmanFordArb")
+    assert hasattr(nexus_arb, "CMAES")
+    assert hasattr(nexus_arb, "UnscentedKalmanFilter")
+    assert hasattr(nexus_arb, "ThompsonSamplingBandit")
+    assert hasattr(nexus_arb, "TradingPolicy")

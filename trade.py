@@ -135,7 +135,7 @@ def run(live: bool = False, flash: bool = False) -> None:
         from engine.mainnet.alchemy_client import AlchemyClient
         from engine.mainnet.transaction_manager import TransactionManager
         from nexus_arb.flash_loan_executor import FlashLoanExecutor
-        from nexus_arb.algorithms.bellman_ford import BellmanFord, PriceGraph, PoolPrice
+        from nexus_arb.algorithms.bellman_ford import BellmanFordArb
 
         alchemy_client  = AlchemyClient(rpc_url)
         w3_flash        = alchemy_client.w3
@@ -145,7 +145,7 @@ def run(live: bool = False, flash: bool = False) -> None:
             chain_id=int(os.getenv("CHAIN_ID", "1")),
         )
         flash_executor  = FlashLoanExecutor.from_env(w3_flash, tx_manager)
-        bellman_ford    = BellmanFord({"trading": {"flash_loan_fee_bps": 9}})
+        bellman_ford    = BellmanFordArb()
         print(f"  [FLASH] NexusFlashReceiver at {os.getenv('FLASH_RECEIVER_ADDRESS', 'NOT SET')}")
         print(f"  [FLASH] DRY_RUN={DRY_RUN}  borrow={FLASH_LOAN_AMOUNT_ETH} ETH")
 
@@ -191,51 +191,37 @@ def run(live: bool = False, flash: bool = False) -> None:
 
         # 3. Flash loan arbitrage (Bellman-Ford + NexusFlashReceiver)
         if flash and flash_executor:
-            # Build a minimal price graph from the live DEX price
-            price_graph = PriceGraph()
+            # Populate BellmanFordArb graph from live DEX prices
+            bellman_ford.clear()
             if dex_price and eth_price:
-                from nexus_arb.algorithms.bellman_ford import PoolPrice
-                price_graph.add_price(PoolPrice(
-                    token_in="WETH", token_out="USDC",
-                    price=dex_price, price_after_fee=dex_price * 0.9995,
-                    fee_bps=5, liquidity=500.0, dex="uniswap_v3"
-                ))
-                # Also check ArbitrageScanner for cross-DEX spread
+                bellman_ford.add_edge("WETH", "USDC", dex_price,         "uniswap_v3")
+                bellman_ford.add_edge("USDC", "WETH", 1.0 / dex_price,   "uniswap_v3")
+                # Cross-DEX edges from ArbitrageScanner
                 simple_opps = arb.scan(eth_price)
                 for o in simple_opps:
                     spread = o.get("spread_pct", 0)
-                    if spread > 0.1 and o.get("sell_price"):
-                        price_graph.add_price(PoolPrice(
-                            token_in="WETH", token_out="USDC",
-                            price=o["sell_price"],
-                            price_after_fee=o["sell_price"] * 0.997,
-                            fee_bps=30, liquidity=100.0,
-                            dex=o.get("sell_on", "sushiswap")
-                        ))
-                        price_graph.add_price(PoolPrice(
-                            token_in="USDC", token_out="WETH",
-                            price=1.0 / o["buy_price"],
-                            price_after_fee=(1.0 / o["buy_price"]) * 0.997,
-                            fee_bps=30, liquidity=100.0,
-                            dex=o.get("buy_on", "uniswap_v3")
-                        ))
+                    if spread > 0.1 and o.get("sell_price") and o.get("buy_price"):
+                        sell_dex = o.get("sell_on", "sushiswap")
+                        buy_dex  = o.get("buy_on",  "uniswap_v3")
+                        bellman_ford.add_edge("WETH", "USDC", o["sell_price"],       sell_dex)
+                        bellman_ford.add_edge("USDC", "WETH", 1.0 / o["buy_price"],  buy_dex)
 
-            nexus_opp = bellman_ford.find_best(price_graph, min_profit_pct=0.05)
-            if nexus_opp:
-                est_profit_usd = nexus_opp.expected_profit_pct / 100 * FLASH_LOAN_AMOUNT_ETH * eth_price
-                print(f"  FLASH ARB: {nexus_opp}  est ${est_profit_usd:.2f}")
+            nexus_result = bellman_ford.find_best_arbitrage()
+            if nexus_result.has_cycle and nexus_result.profit_ratio > 1.0:
+                est_profit_pct = (nexus_result.profit_ratio - 1.0) * 100.0
+                est_profit_usd = est_profit_pct / 100.0 * FLASH_LOAN_AMOUNT_ETH * eth_price
+                print(f"  FLASH ARB: cycle={nexus_result.cycle} profit={est_profit_pct:.3f}%  est ${est_profit_usd:.2f}")
                 if est_profit_usd >= MIN_PROFIT_USD and risk.can_trade():
                     try:
-                        receipt = flash_executor.execute(
-                            nexus_opp,
+                        receipt = flash_executor.execute_from_result(
+                            nexus_result,
                             borrow_amount_eth=FLASH_LOAN_AMOUNT_ETH,
-                            eth_price_usd=eth_price,
                             dry_run=DRY_RUN,
                         )
                         if receipt and hasattr(receipt, "tx_hash"):
                             portfolio.log_trade("FLASH_ARB", eth_price, FLASH_LOAN_AMOUNT_ETH, receipt.tx_hash)
                             risk.record_trade()
-                            print(f"  [FLASH] tx={receipt.tx_hash[:18]}…  success={receipt.success}")
+                            print(f"  [FLASH] tx={receipt.tx_hash[:18]}…  block={receipt.block_number}")
                         elif DRY_RUN:
                             print("  [FLASH] dry_run — tx not broadcast")
                     except Exception as e:
