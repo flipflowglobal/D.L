@@ -12,9 +12,12 @@ Performance improvements over original:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import random
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
 
@@ -185,6 +188,14 @@ class ArbitrageScanner:
         """
         prices = await self.get_prices_async()
         return self._evaluate(prices)
+
+    async def scan_with_timeout(self, eth_price: float, timeout: float = 5.0) -> list:
+        """Scan with a hard timeout — returns [] on timeout to prevent cycle stalls."""
+        try:
+            return await asyncio.wait_for(self.scan_async(eth_price), timeout=timeout) or []
+        except asyncio.TimeoutError:
+            logger.warning("ArbitrageScanner.scan_async timed out after %.1fs", timeout)
+            return []
 
     # ── shared evaluation logic ───────────────────────────────────────────────
 

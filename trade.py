@@ -25,7 +25,7 @@ try:
     import uvloop
     uvloop.install()
 except ImportError:
-    pass
+    pass  # uvloop not available — fallback to asyncio
 
 from dotenv import load_dotenv
 
