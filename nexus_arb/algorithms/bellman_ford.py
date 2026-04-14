@@ -177,11 +177,17 @@ class BellmanFordArb:
         if cycle_node is None:
             return ArbitrageResult(False, [], 1.0, [])
 
-        # Trace back to find the cycle (walk V steps to ensure we're inside)
+        # Trace back to find the cycle (walk V steps to ensure we're inside).
+        # Guard against None predecessors — can occur on nodes only reachable via
+        # virtual zero-weight edges that never got a real predecessor recorded.
         visited = {cycle_node}
         node = cycle_node
         for _ in range(V):
-            node = pred[node]
+            nxt = pred.get(node)
+            if nxt is None:
+                # Cannot trace further; report no exploitable cycle
+                return ArbitrageResult(False, [], 1.0, [])
+            node = nxt
             if node in visited:
                 cycle_start = node
                 break
