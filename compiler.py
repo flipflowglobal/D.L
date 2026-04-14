@@ -78,7 +78,8 @@ CONTRACTS = {
     "FlashLoanArbitrage": {
         "pragma": "^0.8.20",
         "source": """
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: UNLICENSED
+// Copyright (c) 2026 Darcel King. All Rights Reserved.
 pragma solidity ^0.8.20;
 
 interface IPool {

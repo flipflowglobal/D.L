@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: UNLICENSED
+// Copyright (c) 2026 Darcel King. All Rights Reserved.
 pragma solidity ^0.8.20;
 
 // ── Aave V3 Interfaces ────────────────────────────────────────────────────────
