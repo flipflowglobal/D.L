@@ -228,11 +228,11 @@ class ResilientPriceEngine:
                 logger.debug("SushiSwap client unavailable: %s", exc)
 
     async def _uni_price_async(self) -> float:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._uni.get_best_eth_price)
 
     async def _sushi_price_async(self) -> float:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._sushi.get_eth_price_usdc)
 
     # ── Layer 3: CoinGecko (shared TTL cache) ─────────────────────────────────
@@ -254,7 +254,7 @@ class ResilientPriceEngine:
                     resp.raise_for_status()
                     return resp.json()["ethereum"]["usd"]
 
-                loop  = asyncio.get_event_loop()
+                loop  = asyncio.get_running_loop()
                 price = await loop.run_in_executor(None, lambda: self._cache.get(_fetch))
             else:
                 # No cache available — raw async call
@@ -279,7 +279,7 @@ class ResilientPriceEngine:
     def _ensure_cache(self):
         if self._cache is None:
             try:
-                from engine.price_cache import get_cache
-                self._cache = get_cache()
+                from engine.price_cache import price_cache
+                self._cache = price_cache
             except Exception:
                 pass

@@ -1,7 +1,7 @@
 import aiosqlite
 from pathlib import Path
 
-DB_PATH = Path("aureon_persistence.db")
+DB_PATH = Path(__file__).parent / "aureon_persistence.db"
 
 class Database:
 
