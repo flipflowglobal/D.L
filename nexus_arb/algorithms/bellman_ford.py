@@ -220,7 +220,7 @@ class BellmanFordArb:
         return ArbitrageResult(
             has_cycle=profit_ratio > 1.0,
             cycle=cycle_path,
-            profit_ratio=round(profit_ratio, 8),
+            profit_ratio=profit_ratio,
             cycle_edges=cycle_edge_list,
         )
 

@@ -49,6 +49,8 @@ from typing import Optional
 
 import numpy as np
 
+import math
+
 
 @dataclass
 class UKFState:
@@ -173,6 +175,8 @@ class UnscentedKalmanFilter:
         -------
         UKFState with posterior mean, covariance, innovation, anomaly flag
         """
+        if z <= 0:
+            raise ValueError(f"Price observation must be positive, got {z}")
         if self._x is None:
             # Auto-initialize on first observation
             self.initialize(z)
@@ -248,5 +252,3 @@ class UnscentedKalmanFilter:
         return self._P.copy() if self._P is not None else None
 
 
-# stdlib import needed by _sigma_points (math.sqrt)
-import math  # noqa: E402 — placed here to avoid circular import issues
