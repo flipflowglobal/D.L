@@ -98,8 +98,16 @@ class SwapExecutor:
     def _deadline(self) -> int:
         return int(time.time()) + self.DEADLINE_SECONDS
 
-    def _gas_price(self) -> int:
-        return self.w3.eth.gas_price
+    def _eip1559_fees(self) -> dict:
+        """Compute EIP-1559 fee parameters from the latest block's base fee."""
+        latest = self.w3.eth.get_block("latest")
+        base_fee = latest.get("baseFeePerGas", self.w3.eth.gas_price)
+        priority_fee = self.w3.to_wei(2, "gwei")  # 2 gwei tip
+        max_fee = base_fee * 2 + priority_fee      # 2× headroom on base fee
+        return {
+            "maxFeePerGas": max_fee,
+            "maxPriorityFeePerGas": priority_fee,
+        }
 
     def _min_out(self, amount: int, slippage: float) -> int:
         """Apply slippage tolerance: amountOut × (1 − slippage)."""
@@ -121,11 +129,11 @@ class SwapExecutor:
         nonce = self.w3.eth.get_transaction_count(self.wallet.account.address)
         tx = token.functions.approve(
             Web3.to_checksum_address(SWAP_ROUTER),
-            2**256 - 1,  # max approval
+            amount_wei,  # exact-amount approval — minimizes exposure if router is compromised
         ).build_transaction({
             "from":     self.wallet.account.address,
             "nonce":    nonce,
-            "gasPrice": self._gas_price(),
+            **self._eip1559_fees(),
             "gas":      60_000,
         })
         signed = self.wallet.account.sign_transaction(tx)
@@ -171,7 +179,7 @@ class SwapExecutor:
             "from":     self.wallet.account.address,
             "value":    amount_in,   # ETH sent with the tx
             "nonce":    nonce,
-            "gasPrice": self._gas_price(),
+            **self._eip1559_fees(),
             "gas":      200_000,
         })
 
@@ -214,7 +222,7 @@ class SwapExecutor:
             "from":     self.wallet.account.address,
             "value":    0,
             "nonce":    nonce,
-            "gasPrice": self._gas_price(),
+            **self._eip1559_fees(),
             "gas":      200_000,
         })
 
