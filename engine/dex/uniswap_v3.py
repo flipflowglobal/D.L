@@ -121,7 +121,7 @@ class UniswapV3:
         All three web3 calls run in the default ThreadPoolExecutor so the
         event loop is never blocked.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         async def _quote(fee: int) -> Optional[float]:
             return await loop.run_in_executor(
@@ -171,7 +171,7 @@ class UniswapV3:
         fee:           int = FEE_MEDIUM,
     ) -> Optional[int]:
         """Async wrapper for quote_token_out."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
             self.quote_token_out,
