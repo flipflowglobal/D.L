@@ -17,7 +17,7 @@ class Executor:
     decoupled from live blockchain calls during back-testing.
     """
 
-    def __init__(self, wallet: "WalletConfig | None" = None, rpc_url: Optional[str] = None):
+    def __init__(self, wallet: Optional["WalletConfig"] = None, rpc_url: Optional[str] = None):
         self.wallet = wallet
         self.rpc_url = rpc_url
 

@@ -206,6 +206,8 @@ class ArbitrageScanner:
         max_dex = max(prices, key=prices.get)
         low     = prices[min_dex]
         high    = prices[max_dex]
+        if low <= 0:
+            return None
         spread  = (high - low) / low
 
         if spread >= self.spread_threshold:

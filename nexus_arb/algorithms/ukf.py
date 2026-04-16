@@ -47,6 +47,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+import math
 import numpy as np
 
 
@@ -248,5 +249,4 @@ class UnscentedKalmanFilter:
         return self._P.copy() if self._P is not None else None
 
 
-# stdlib import needed by _sigma_points (math.sqrt)
-import math  # noqa: E402 — placed here to avoid circular import issues
+
