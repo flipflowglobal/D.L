@@ -131,7 +131,6 @@ def run(live: bool = False, flash: bool = False) -> None:
 
     if flash:
         # Flash loan mode — uses NexusFlashReceiver + Bellman-Ford
-        from web3 import Web3
         from engine.mainnet.alchemy_client import AlchemyClient
         from engine.mainnet.transaction_manager import TransactionManager
         from nexus_arb.flash_loan_executor import FlashLoanExecutor
