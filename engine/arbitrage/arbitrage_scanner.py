@@ -171,7 +171,7 @@ class ArbitrageScanner:
                 return prices
 
         # Fallback to simulation using cached CoinGecko price
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         base = await loop.run_in_executor(None, self._coingecko_price) or 2000.0
         return self._simulated_prices(base)
 
@@ -200,6 +200,8 @@ class ArbitrageScanner:
         max_dex = max(prices, key=prices.get)
         low     = prices[min_dex]
         high    = prices[max_dex]
+        if low <= 0:
+            return None
         spread  = (high - low) / low
 
         if spread >= self.spread_threshold:

@@ -104,14 +104,14 @@ class SushiSwap:
                 sushi.get_eth_price_usdc_async(),
             )
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.get_eth_price_usdc)
 
     async def get_amounts_out_async(
         self, amount_in_wei: int, path: list
     ) -> Optional[list]:
         """Async wrapper for get_amounts_out."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self.get_amounts_out, amount_in_wei, path
         )

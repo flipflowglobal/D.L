@@ -415,6 +415,29 @@ class FlashLoanExecutor:
 
         return b""
 
+    # ── Validation ───────────────────────────────────────────────────────────
+
+    def _validate_opportunity(self, opportunity) -> None:
+        """
+        Validate an ArbitrageOpportunity or ArbitrageResult before execution.
+
+        Raises ValueError for:
+          - cycle shorter than 3 tokens
+          - pools count != cycle length - 1 (legacy ArbitrageOpportunity only)
+        """
+        cycle = getattr(opportunity, "cycle", None) or []
+        if len(cycle) < 3:
+            raise ValueError(
+                f"Opportunity cycle must have ≥3 tokens, got: {cycle!r}"
+            )
+        # Legacy ArbitrageOpportunity has a pools attribute
+        pools = getattr(opportunity, "pools", None)
+        if pools is not None and len(pools) != len(cycle) - 1:
+            raise ValueError(
+                f"Opportunity pools count ({len(pools)}) must equal "
+                f"cycle length - 1 ({len(cycle) - 1})"
+            )
+
     # ── Status helpers ────────────────────────────────────────────────────────
 
     def _is_paused(self) -> bool:
