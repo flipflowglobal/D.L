@@ -1,7 +1,11 @@
+import logging
+
 import aiosqlite
 from pathlib import Path
 
 DB_PATH = Path("aureon_persistence.db")
+
+logger = logging.getLogger("aureon.database")
 
 class Database:
 
@@ -37,14 +41,18 @@ class Database:
 
     async def add_agent(self, agent_id, name, agent_type):
 
-        async with aiosqlite.connect(self.db_path) as db:
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
 
-            await db.execute(
-                "INSERT INTO agents (id,name,type) VALUES (?,?,?)",
-                (agent_id,name,agent_type)
-            )
+                await db.execute(
+                    "INSERT INTO agents (id,name,type) VALUES (?,?,?)",
+                    (agent_id,name,agent_type)
+                )
 
-            await db.commit()
+                await db.commit()
+        except Exception as exc:
+            logger.error("Failed to add agent %s: %s", agent_id, exc)
+            raise
 
     async def get_agents(self):
 

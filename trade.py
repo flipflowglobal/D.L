@@ -14,11 +14,12 @@ Quick start:
 
 import argparse
 import json
+import logging
 import os
 import signal
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 # ── uvloop: faster event loop for any async calls invoked from trade.py ───────
 try:
@@ -30,6 +31,8 @@ except ImportError:
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger("aureon.trade")
 
 # ── runtime config ────────────────────────────────────────────────────────────
 
@@ -131,7 +134,7 @@ def run(live: bool = False) -> None:
 
     while running:
         cycle += 1
-        ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         print(f"  ── Cycle {cycle:>4}  [{ts} UTC] {'─' * 34}")
 
         # 1. Fetch ETH price
