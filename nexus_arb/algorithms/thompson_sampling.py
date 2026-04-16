@@ -47,6 +47,7 @@ Formal Specification
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence
@@ -209,7 +210,6 @@ class ThompsonSamplingBandit:
         s = self._stats[arm]
         n = s.alpha + s.beta
         p = s.expected_reward
-        import math
         z = 1.96 if confidence == 0.95 else 2.576   # 95% or 99%
         margin = z * math.sqrt(p * (1 - p) / max(n, 1))
         return (max(0.0, round(p - margin, 4)), min(1.0, round(p + margin, 4)))
