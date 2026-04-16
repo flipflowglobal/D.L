@@ -126,7 +126,7 @@ async def status() -> dict:
 # --------------------------------------------------
 
 @app.post("/aureon/start", summary="Start the agent loop")
-async def start_legacy_agent(agent_id: str) -> JSONResponse:
+async def start_aureon_agent(agent_id: str) -> JSONResponse:
     """
     Launch the autonomous trading/reasoning loop for *agent_id*.
 
@@ -152,7 +152,7 @@ async def start_legacy_agent(agent_id: str) -> JSONResponse:
 
 
 @app.post("/aureon/stop", summary="Stop the agent loop")
-async def stop_legacy_agent() -> JSONResponse:
+async def stop_aureon_agent() -> JSONResponse:
     """Signal the autonomous loop to halt after its current iteration."""
     if not loop.running:
         return JSONResponse(
