@@ -60,6 +60,17 @@ SOL_DIR     = Path(__file__).parent / "contracts"
 AAVE_POOL_SEPOLIA  = "0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951"
 AAVE_POOL_MAINNET  = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
 
+
+def _require_profit_wallet() -> list:
+    """Return [checksummed PROFIT_WALLET] or raise — never silently deploy to a dead address."""
+    if not PROFIT_WALLET:
+        raise ValueError(
+            "PROFIT_WALLET (or WALLET_ADDRESS) must be set in .env before deploying.\n"
+            "Without it the contract constructor has no recipient for profits."
+        )
+    return [Web3.to_checksum_address(PROFIT_WALLET)]
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SOLIDITY SOURCE REGISTRY
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -130,10 +141,7 @@ contract FlashLoanArbitrage {
 }
 """,
         # Constructor takes: (address profitWallet)
-        "constructor_args": lambda: [
-            Web3.to_checksum_address(PROFIT_WALLET) if PROFIT_WALLET else
-            Web3.to_checksum_address("0x0000000000000000000000000000000000000001")
-        ],
+        "constructor_args": lambda: _require_profit_wallet(),
         "optimize_runs": 1_000_000,
         "solc_version":  "0.8.20",
     }

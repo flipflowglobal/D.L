@@ -279,7 +279,7 @@ class ResilientPriceEngine:
     def _ensure_cache(self):
         if self._cache is None:
             try:
-                from engine.price_cache import get_cache
-                self._cache = get_cache()
+                from engine.price_cache import price_cache
+                self._cache = price_cache
             except Exception as exc:
                 logger.debug("Price cache init failed: %s", exc)
