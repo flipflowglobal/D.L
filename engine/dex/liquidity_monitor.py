@@ -107,5 +107,5 @@ class LiquidityMonitor:
             logger.debug("dex-oracle async unavailable: %s", exc)
 
         # Fallback: run sync get_price in executor (uses shared cache)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.get_price)
