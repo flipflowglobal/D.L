@@ -52,7 +52,8 @@ jobs:
         run: pip install pip-audit
 
       - name: Audit core dependencies
-        run: pip-audit -r requirements.txt --desc --output pip-audit-results.txt || true
+        continue-on-error: true
+        run: pip-audit -r requirements.txt --desc --output pip-audit-results.txt
 
       - name: Display audit results
         run: cat pip-audit-results.txt
@@ -81,10 +82,12 @@ jobs:
         run: cargo install cargo-audit
 
       - name: Audit dex-oracle
-        run: cargo audit --file dex-oracle/Cargo.lock || true
+        continue-on-error: true
+        run: cargo audit --file dex-oracle/Cargo.lock
 
       - name: Audit tx-engine
-        run: cargo audit --file tx-engine/Cargo.lock || true
+        continue-on-error: true
+        run: cargo audit --file tx-engine/Cargo.lock
 
   # ── Solidity static analysis ─────────────────────────────────────────────
   solidity-check:
@@ -135,11 +138,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run ShellCheck
+        continue-on-error: true
         run: |
-          # ShellCheck is pre-installed on ubuntu-latest
           echo "Checking shell scripts..."
           find . -name '*.sh' -not -path './.git/*' | while read script; do
             echo "  Checking: $script"
-            shellcheck --severity=error "$script" || true
+            shellcheck --severity=error "$script"
           done
           echo "ShellCheck complete"
