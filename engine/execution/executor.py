@@ -1,9 +1,13 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
+
+import logging
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from vault.wallet_config import WalletConfig
     from engine.portfolio import Portfolio
+
+logger = logging.getLogger("aureon.executor")
 
 
 class Executor:
@@ -13,7 +17,7 @@ class Executor:
     decoupled from live blockchain calls during back-testing.
     """
 
-    def __init__(self, wallet: "WalletConfig | None" = None, rpc_url: str | None = None):
+    def __init__(self, wallet: "WalletConfig | None" = None, rpc_url: Optional[str] = None):
         self.wallet = wallet
         self.rpc_url = rpc_url
 

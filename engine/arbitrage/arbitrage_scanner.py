@@ -12,6 +12,7 @@ Performance improvements over original:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import random
 from typing import Optional
@@ -21,6 +22,8 @@ from dotenv import load_dotenv
 from engine.price_cache import price_cache
 
 load_dotenv()
+
+logger = logging.getLogger("aureon.arbitrage_scanner")
 
 
 class ArbitrageScanner:
@@ -83,7 +86,8 @@ class ArbitrageScanner:
             return float(r.json()["ethereum"]["usd"])
         try:
             return price_cache.get(_fetch)
-        except Exception:
+        except Exception as exc:
+            logger.debug("CoinGecko price fetch failed: %s", exc)
             return None
 
     def _live_prices(self) -> dict:

@@ -167,7 +167,8 @@ class AgentLoop:
             try:
                 from engine.resilient_price_engine import ResilientPriceEngine
                 self._price_engine = ResilientPriceEngine(supervisor=None)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Fallback ResilientPriceEngine init failed: %s", exc)
                 self._price_engine = None
 
         # Build engine in executor (one-time synchronous import + init)
