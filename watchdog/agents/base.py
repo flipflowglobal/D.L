@@ -4,6 +4,18 @@ watchdog/agents/base.py — Abstract base class for all watchdog agents.
 Every agent runs as an independent asyncio Task, polls its assigned
 resource on a configurable interval, and publishes WatchdogEvents to
 the shared EventBus.
+
+Shared-mind integration
+-----------------------
+Each agent holds an optional ``SyncBridge`` (set by the kernel via
+``agent.mind = shared_mind.connect(agent_id)`` after registration).
+
+When the bridge is present:
+  - After every check(), the agent's state is pushed to MindCore so
+    peers can read it.
+  - During healing, the agent marks itself as "healing" so the
+    consensus engine can prevent concurrent heals on the same subsystem.
+  - After healing completes, the state reverts to "healthy"/"unknown".
 """
 
 from __future__ import annotations
@@ -12,11 +24,22 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from watchdog.event_bus import EventBus, EventSeverity, EventType, WatchdogEvent
 
+if TYPE_CHECKING:
+    from watchdog.mind.sync import SyncBridge
+
 logger = logging.getLogger("watchdog.agent.base")
+
+# Map event severity to shard state string
+_SEVERITY_TO_STATE = {
+    EventSeverity.INFO:     "healthy",
+    EventSeverity.WARNING:  "degraded",
+    EventSeverity.CRITICAL: "critical",
+    EventSeverity.HEALED:   "healthy",
+}
 
 
 class WatchdogAgent(ABC):
@@ -24,10 +47,10 @@ class WatchdogAgent(ABC):
     Abstract base for all watchdog agents.
 
     Each agent:
-      - Has a unique ``agent_id`` (typically derived from the resource it watches).
+      - Has a unique ``agent_id`` (derived from the resource it watches).
       - Polls on a configurable ``interval`` (seconds).
       - Publishes events to the shared ``EventBus``.
-      - Tracks consecutive failure count for escalation logic.
+      - Optionally participates in the shared mind via a ``SyncBridge``.
     """
 
     def __init__(
@@ -41,6 +64,9 @@ class WatchdogAgent(ABC):
         self.source    = source
         self.bus       = bus
         self.interval  = interval
+
+        # Shared-mind bridge — injected by kernel after registration
+        self.mind: Optional["SyncBridge"] = None
 
         self._running:       bool              = False
         self._task:          Optional[asyncio.Task] = None
@@ -112,6 +138,9 @@ class WatchdogAgent(ABC):
 
             await self.bus.publish(event)
 
+            # ── Sync to shared mind ───────────────────────────────────────────
+            await self._sync_to_mind(event)
+
             if event.severity == EventSeverity.CRITICAL:
                 self._failures += 1
                 healed = await self._try_heal(event)
@@ -128,17 +157,30 @@ class WatchdogAgent(ABC):
             await asyncio.sleep(self.interval)
 
     async def _try_heal(self, event: WatchdogEvent) -> bool:
-        """Publish HEALING_STARTED, call heal(), publish outcome."""
+        """
+        Publish HEALING_STARTED, declare healing state to the mind,
+        call heal(), restore state, publish outcome.
+        """
         await self.bus.publish(self._make_event(
             EventType.HEALING_STARTED,
             EventSeverity.INFO,
             f"Healing attempt #{self._failures} for {event.event_type.name}",
         ))
+
+        # Tell peers we are healing
+        if self.mind:
+            await self.mind.set_healing(True)
+
         try:
             success = await self.heal(event)
         except Exception as exc:
             self.log.error("heal() raised: %s", exc)
             success = False
+
+        # Restore mind state
+        if self.mind:
+            post_state = "healthy" if success else "critical"
+            await self.mind.push(post_state, last_heal_success=success)
 
         outcome_type = EventType.HEALING_SUCCESS if success else EventType.HEALING_FAILED
         await self.bus.publish(self._make_event(
@@ -147,6 +189,25 @@ class WatchdogAgent(ABC):
             f"Healing {'succeeded' if success else 'failed'} for {self.source}",
         ))
         return success
+
+    # ── Shared-mind sync ──────────────────────────────────────────────────────
+
+    async def _sync_to_mind(self, event: WatchdogEvent) -> None:
+        """Push this check's result to MindCore (no-op if mind not wired)."""
+        if self.mind is None:
+            return
+        state = _SEVERITY_TO_STATE.get(event.severity, "unknown")
+        try:
+            await self.mind.push(
+                state,
+                event_type = event.event_type.name,
+                message    = event.message[:120],   # truncate for shard storage
+                check_no   = self._check_count,
+                failures   = self._failures,
+            )
+        except Exception as exc:
+            # Never let mind sync crash the poll loop
+            self.log.warning("Mind sync failed: %s", exc)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -169,12 +230,17 @@ class WatchdogAgent(ABC):
     @property
     def status(self) -> dict:
         """Snapshot of this agent's current health state."""
-        return {
-            "agent_id":    self.agent_id,
-            "source":      self.source,
-            "running":     self._running,
-            "failures":    self._failures,
-            "checks":      self._check_count,
-            "last_ok_ago": round(time.monotonic() - self._last_ok, 1),
-            "uptime_s":    round(time.monotonic() - self._started_at, 1),
+        snap: dict = {
+            "agent_id":        self.agent_id,
+            "source":          self.source,
+            "running":         self._running,
+            "failures":        self._failures,
+            "checks":          self._check_count,
+            "last_ok_ago_s":   round(time.monotonic() - self._last_ok, 1),
+            "uptime_s":        round(time.monotonic() - self._started_at, 1),
+            "mind_connected":  self.mind is not None,
         }
+        if self.mind:
+            snap["shard_state"]  = self.mind.shard.state
+            snap["vector_clock"] = self.mind.shard.vector_clock
+        return snap

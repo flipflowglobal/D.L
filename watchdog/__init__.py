@@ -35,6 +35,7 @@ from watchdog.event_bus         import EventBus, EventSeverity, EventType, Watch
 from watchdog.kernel            import WatchdogKernel, kernel
 from watchdog.registry          import AgentRegistry
 from watchdog.healing.actions   import HealingStrategy, healing_strategy
+from watchdog.mind.sync         import SharedMind, SyncBridge, shared_mind
 from watchdog.agents            import (
     WatchdogAgent,
     DatabaseAgent,
@@ -67,10 +68,13 @@ __all__ = [
     "AgentRegistry",
     "HealingStrategy",
     "EventBus",
+    "SharedMind",
+    "SyncBridge",
     # Singletons
     "kernel",
     "event_bus",
     "healing_strategy",
+    "shared_mind",
     # Event types
     "EventType",
     "EventSeverity",

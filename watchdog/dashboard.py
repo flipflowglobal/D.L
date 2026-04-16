@@ -30,8 +30,9 @@ from typing import Any, Deque, Dict, List, Optional
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
-from watchdog.event_bus import EventBus, EventSeverity, EventType, WatchdogEvent, event_bus
-from watchdog.kernel    import WatchdogKernel, kernel
+from watchdog.event_bus  import EventBus, EventSeverity, EventType, WatchdogEvent, event_bus
+from watchdog.kernel     import WatchdogKernel, kernel
+from watchdog.mind.sync  import shared_mind
 
 logger = logging.getLogger("watchdog.dashboard")
 
@@ -169,6 +170,49 @@ async def trigger_heal(agent_id: str) -> dict:
 
     kernel.strategy.record_result(agent_id, success)
     return {"success": success, "agent_id": agent_id}
+
+
+@router.get("/mind")
+async def get_mind_snapshot() -> dict:
+    """
+    Full SharedMind snapshot: all agent shards, state counts, consensus stats.
+
+    This shows the collective intelligence view — what every agent knows
+    about every other agent via the shared shard synchronization.
+    """
+    return shared_mind.global_snapshot()
+
+
+@router.get("/mind/timeline")
+async def get_mind_timeline(n: int = 100) -> list:
+    """
+    Return the last *n* entries from the global mind timeline.
+
+    The timeline records every shard sync and broadcast message across
+    all agents in chronological order.
+    """
+    n = min(n, 2000)
+    return shared_mind.timeline(n)
+
+
+@router.get("/mind/shards/{agent_id:path}")
+async def get_mind_shard(agent_id: str) -> dict:
+    """Return the shard for a specific agent (includes observation history)."""
+    shard = shared_mind.get_shard(agent_id)
+    if shard is None:
+        raise HTTPException(status_code=404, detail=f"Shard not found: {agent_id}")
+    return shard.to_dict()
+
+
+@router.get("/mind/consensus")
+async def get_consensus_stats() -> dict:
+    """Return consensus engine statistics (rounds, approvals, rejections)."""
+    snap = kernel.health_snapshot()
+    mind = snap.get("mind", {})
+    return {
+        "consensus_stats": mind.get("consensus_stats", {}),
+        "kernel_rejects":  snap.get("consensus_rejects", 0),
+    }
 
 
 @router.get("/summary")
