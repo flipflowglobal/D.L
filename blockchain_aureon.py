@@ -1,4 +1,14 @@
+"""
+blockchain_aureon.py — Multi-chain blockchain agent server.
+
+Manages Ethereum, BSC, and optionally Solana wallets and balance queries
+through a FastAPI interface with async background workers.
+"""
+
+from __future__ import annotations
+
 import asyncio
+import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -6,6 +16,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
 from enum import Enum
+
+logger = logging.getLogger("aureon.blockchain")
 
 from dotenv import load_dotenv
 
@@ -75,7 +87,7 @@ class Orchestrator:
     async def execute_task(self, task: TaskRequest):
         agent = self.agents.get(task.agent_id)
         if not agent:
-            print("Agent not found:", task.agent_id)
+            logger.warning("Agent not found: %s", task.agent_id)
             return
 
         agent.status = AgentStatus.RUNNING
@@ -84,9 +96,9 @@ class Orchestrator:
                 result = await blockchain_task(task.payload)
             else:
                 result = {"status": "unknown"}
-            print("TASK RESULT:", result)
-        except Exception as e:
-            print("ERROR:", e)
+            logger.info("Task result: %s", result)
+        except Exception as exc:
+            logger.error("Task error: %s", exc)
         agent.status = AgentStatus.IDLE
 
 # ---------------- BLOCKCHAIN FUNCTIONS ----------------

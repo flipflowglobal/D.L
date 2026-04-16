@@ -93,5 +93,5 @@ class Portfolio:
             "summary":     self.summary(),
             "trades":      self.trades,
         }
-        with open(target, "w") as f:
+        with open(target, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)

@@ -54,7 +54,7 @@ from engine.execution.executor     import Executor
 def _load_wallet_address() -> str:
     vault = os.path.join(os.path.dirname(__file__), "vault", "wallet.json")
     if os.path.exists(vault):
-        with open(vault) as f:
+        with open(vault, encoding="utf-8") as f:
             return json.load(f)["address"]
     return os.getenv("WALLET_ADDRESS", "NOT CONFIGURED")
 
@@ -189,7 +189,7 @@ def run(live: bool = False) -> None:
                 print("  [RISK] Daily trade limit reached — holding")
             elif signal_val == "BUY" and portfolio.balance_usd >= eth_price * TRADE_SIZE_ETH:
                 if live:
-                    gas_cost = executor.estimate_gas_usd() if hasattr(executor, "estimate_gas_usd") else 0
+                    gas_cost = executor.estimate_gas_usd()
                     if gas_cost <= GAS_BUDGET_USD:
                         try:
                             tx = executor.swap_eth_to_usdc(

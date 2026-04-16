@@ -8,6 +8,7 @@ fetch that market_data.py already performs in the same cycle.
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Optional
 
 from engine.price_cache import price_cache
@@ -28,8 +29,9 @@ class LiquidityMonitor:
         "?ids=ethereum&vs_currencies=usd"
     )
 
-    def __init__(self):
-        self._dex_oracle_url: Optional[str] = "http://localhost:9001"
+    def __init__(self) -> None:
+        _addr = os.getenv("DEX_ORACLE_ADDR", "127.0.0.1:9001")
+        self._dex_oracle_url: str = f"http://{_addr}"
 
     # ── synchronous ───────────────────────────────────────────────────────────
 

@@ -12,11 +12,17 @@ Mainnet addresses:
   USDC          : 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
 """
 
+from __future__ import annotations
+
+import logging
 import time
 from typing import Optional
+
 from web3 import Web3
 
 from vault.wallet_config import WalletConfig
+
+logger = logging.getLogger("aureon.swap_executor")
 
 SWAP_ROUTER    = "0xE592427A0AEce92De3Edee1F18E0157C05861564"
 WETH_ADDRESS   = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -130,7 +136,7 @@ class SwapExecutor:
         })
         signed = self.wallet.account.sign_transaction(tx)
         self.w3.eth.send_raw_transaction(signed.raw_transaction)
-        print(f"[SwapExecutor] Approved {token_address[:8]}… for SwapRouter")
+        logger.info("Approved %s… for SwapRouter", token_address[:10])
 
     # ── public swap methods ───────────────────────────────────────────────────
 
@@ -177,7 +183,7 @@ class SwapExecutor:
 
         signed   = self.wallet.account.sign_transaction(tx)
         tx_hash  = self.w3.eth.send_raw_transaction(signed.raw_transaction)
-        print(f"[SwapExecutor] ETH→USDC  {amount_eth} ETH  tx={tx_hash.hex()[:18]}…")
+        logger.info("ETH→USDC  %.4f ETH  tx=%s…", amount_eth, tx_hash.hex()[:18])
         return tx_hash.hex()
 
     def swap_usdc_to_eth(
@@ -220,7 +226,7 @@ class SwapExecutor:
 
         signed  = self.wallet.account.sign_transaction(tx)
         tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
-        print(f"[SwapExecutor] USDC→ETH  {amount_usdc} USDC  tx={tx_hash.hex()[:18]}…")
+        logger.info("USDC→ETH  %.2f USDC  tx=%s…", amount_usdc, tx_hash.hex()[:18])
         return tx_hash.hex()
 
     def estimate_gas_usd(self, gas: int = 200_000) -> float:

@@ -28,10 +28,13 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import os
 from typing import Callable, Optional
+
+logger = logging.getLogger("aureon.price_cache")
 
 
 class _PriceCache:
@@ -90,14 +93,14 @@ class _PriceCache:
                     self._timestamp = now
                     return self._price
             except Exception as exc:
-                print(f"[PriceCache] fetch_fn raised: {exc}")
+                logger.warning("fetch_fn raised: %s", exc)
 
             # Fetch failed — use stale value if available, else fallback
             if self._price is not None:
-                print(f"[PriceCache] Using stale price ${self._price:,.2f} (fetch failed)")
+                logger.warning("Using stale price $%,.2f (fetch failed)", self._price)
                 return self._price
 
-            print(f"[PriceCache] No price available, using fallback ${self._fallback:,.2f}")
+            logger.warning("No price available, using fallback $%,.2f", self._fallback)
             return self._fallback
 
     def invalidate(self) -> None:

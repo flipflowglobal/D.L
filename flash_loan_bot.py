@@ -82,11 +82,12 @@ def execute_flash_loan(amount_wei: int, token_address: str, profit_wallet: str):
         b"",   # params passed to executeOperation
         0,     # referralCode
     ).build_transaction({
-        "from": account.address,
-        "nonce": w3.eth.get_transaction_count(account.address),
-        "gas": 500_000,
-        "gasPrice": w3.eth.gas_price,
-        "chainId": w3.eth.chain_id,
+        "from":                 account.address,
+        "nonce":                w3.eth.get_transaction_count(account.address),
+        "gas":                  500_000,
+        "maxFeePerGas":         w3.to_wei(100, "gwei"),
+        "maxPriorityFeePerGas": w3.to_wei(2,   "gwei"),
+        "chainId":              w3.eth.chain_id,
     })
 
     signed_tx = w3.eth.account.sign_transaction(tx, private_key=PRIVATE_KEY)

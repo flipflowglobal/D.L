@@ -1,32 +1,37 @@
 #!/usr/bin/env python3
-# check_balance.py
-# Checks ETH balance of your wallet on Sepolia testnet
+"""
+check_balance.py — Display ETH balance of the configured wallet.
+
+Reads PRIVATE_KEY and RPC_URL from .env and prints the address,
+chain ID, and current ETH balance.
+"""
+
+from __future__ import annotations
+
+import os
 
 from dotenv import load_dotenv
-import os
-from vault.wallet_config import WalletConfig
-from web3 import Web3
 
-# Load environment variables
 load_dotenv(".env")
 
-# Initialize wallet
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
-RPC_URL = os.getenv("RPC_URL")
+RPC_URL     = os.getenv("RPC_URL")
 
-if not PRIVATE_KEY or not RPC_URL:
-    raise Exception("PRIVATE_KEY or RPC_URL not set in .env")
+if not PRIVATE_KEY:
+    raise RuntimeError("PRIVATE_KEY not set in .env — run setup_wallet.py first")
+if not RPC_URL:
+    raise RuntimeError("RPC_URL not set in .env")
+
+from vault.wallet_config import WalletConfig
 
 wallet = WalletConfig(PRIVATE_KEY, RPC_URL)
-w3 = Web3(Web3.HTTPProvider(RPC_URL))
 
-if not w3.is_connected():
-    raise Exception("Web3 connection failed. Check RPC_URL.")
+if not wallet.is_connected():
+    raise RuntimeError(f"Web3 connection failed — check RPC_URL: {RPC_URL}")
 
-# Fetch and display balance
-balance_wei = w3.eth.get_balance(wallet.account.address)
-balance_eth = w3.from_wei(balance_wei, "ether")
+balance_eth = wallet.get_balance_eth()
+chain_id    = wallet.w3.eth.chain_id
 
-print("Wallet address:", wallet.account.address)
-print("Balance (ETH):", balance_eth)
-print("Chain ID:", w3.eth.chain_id)
+print(f"Wallet address : {wallet.address}")
+print(f"Chain ID       : {chain_id}")
+print(f"Balance (ETH)  : {balance_eth:.6f}")

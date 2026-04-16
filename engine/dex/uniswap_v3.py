@@ -17,9 +17,12 @@ Mainnet addresses:
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
 
 from web3 import Web3
+
+logger = logging.getLogger("aureon.uniswap_v3")
 
 # ── Mainnet constants ─────────────────────────────────────────────────────────
 QUOTER_ADDRESS = "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
@@ -90,7 +93,7 @@ class UniswapV3:
             ).call()
             return amount_out_raw / 1e6    # USDC has 6 decimals
         except Exception as exc:
-            print(f"[UniswapV3] Price quote failed (fee={fee}): {exc}")
+            logger.warning("Price quote failed (fee=%d): %s", fee, exc)
             return None
 
     # ── synchronous best-price (sequential — original behaviour) ─────────────
@@ -160,7 +163,7 @@ class UniswapV3:
                 0,
             ).call()
         except Exception as exc:
-            print(f"[UniswapV3] quote_token_out failed: {exc}")
+            logger.warning("quote_token_out failed: %s", exc)
             return None
 
     async def quote_token_out_async(
