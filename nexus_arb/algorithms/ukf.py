@@ -47,6 +47,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+import math
 import numpy as np
 
 import math
@@ -250,5 +251,6 @@ class UnscentedKalmanFilter:
     def covariance(self) -> Optional[np.ndarray]:
         """Current state covariance, or None if not initialized."""
         return self._P.copy() if self._P is not None else None
+
 
 

@@ -347,7 +347,7 @@ class TradingAgent:
 
         equity    = self._capital + self._position_eth * price
         cash_ratio = self._capital / max(equity, 1.0)
-        drawdown   = max(0.0, 1.0 - equity / self._peak_capital)
+        drawdown   = max(0.0, 1.0 - equity / max(self._peak_capital, 1.0))
         volatility = abs(price - self._prev_price) / max(self._prev_price, 1.0)
 
         state = TradingPolicy.encode_state(
@@ -540,7 +540,8 @@ class TradingAgent:
                 timeout=4,
             )
             r.raise_for_status()
-            return float(r.json()[cg_id]["usd"])
+            data = r.json()
+            return float(data.get(cg_id, {}).get("usd", 0))
         except Exception:
             return None
 

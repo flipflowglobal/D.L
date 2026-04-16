@@ -239,3 +239,29 @@ class BellmanFordArb:
             if result.has_cycle and result.profit_ratio > best.profit_ratio:
                 best = result
         return best
+
+
+# ── Legacy compatibility classes ──────────────────────────────────────────────
+
+@dataclass
+class PoolPrice:
+    """Legacy PoolPrice descriptor used by FlashLoanExecutor.execute() and tests."""
+    token_in:       str
+    token_out:      str
+    price:          float
+    price_after_fee: float
+    fee_bps:        int
+    liquidity:      float
+    dex:            str
+
+
+@dataclass
+class ArbitrageOpportunity:
+    """Legacy ArbitrageOpportunity used by FlashLoanExecutor.execute() and tests."""
+    cycle:               List[str]
+    pools:               List[PoolPrice]
+    gross_rate:          float
+    net_rate:            float
+    expected_profit_pct: float
+    max_input_eth:       float
+    score:               float

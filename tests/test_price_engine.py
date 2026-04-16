@@ -5,13 +5,12 @@ All tests run offline — no network calls required.
 
 import sys
 import os
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import pytest
 
-from engine.price_cache import _PriceCache, price_cache
+from engine.price_cache import _PriceCache
 from engine.resilient_price_engine import (
     ResilientPriceEngine,
     _CircuitBreaker,
