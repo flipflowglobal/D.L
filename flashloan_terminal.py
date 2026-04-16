@@ -422,7 +422,7 @@ class FlashLoanTerminal:
         if self.flash_executor:
             try:
                 on_chain_profit = self.flash_executor.total_profit_eth()
-                print(f"  {_c('On-chain', _BOLD)}")  # noqa: E501
+                print(f"  {_c('On-chain', _BOLD)}")
                 print("    Total profit (contract): %.6f ETH" % on_chain_profit)
                 print()
             except Exception:
