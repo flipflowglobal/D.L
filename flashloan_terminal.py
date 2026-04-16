@@ -159,8 +159,17 @@ class FlashLoanTerminal:
         self.running    = True
         self.cycle      = 0
 
-        # Flash executor (only available when RPC + key + receiver are set)
+        # Flash executor is lazy-initialised on first execution request
+        # to avoid network calls during scan-only / offline use.
+        self._flash_executor_init = False
         self.flash_executor = None
+
+    def _ensure_executor(self) -> None:
+        """Lazy-initialise FlashLoanExecutor on first use (avoids network
+        calls during scan-only / offline startup)."""
+        if self._flash_executor_init:
+            return
+        self._flash_executor_init = True
         self._init_flash_executor()
 
     def _init_flash_executor(self) -> None:
@@ -296,7 +305,8 @@ class FlashLoanTerminal:
             print(f"\n  {_c('[SKIP]', _YELLOW)} Est. profit ${est_profit:.2f} < min ${MIN_PROFIT_USD}")
             return None
 
-        # Executor check
+        # Executor check (lazy-init on first execution request)
+        self._ensure_executor()
         if self.flash_executor is None:
             print(f"\n  {_c('[!]', _YELLOW)} FlashLoanExecutor not available")
             print(f"  {_c('[i]', _DIM)} Requires: RPC_URL, PRIVATE_KEY, FLASH_RECEIVER_ADDRESS")
@@ -362,7 +372,7 @@ class FlashLoanTerminal:
                   f"Trades: {summary['trade_count']}")
             print()
 
-            for remaining in range(SCAN_INTERVAL, 0, -1):
+            for _ in range(SCAN_INTERVAL, 0, -1):
                 if not self.running:
                     break
                 time.sleep(1)
@@ -381,6 +391,7 @@ class FlashLoanTerminal:
         rpc_ok = _rpc_url() is not None
         key_ok = _has_private_key()
         recv_ok = os.getenv("FLASH_RECEIVER_ADDRESS", "") != ""
+        self._ensure_executor()
         exec_ok = self.flash_executor is not None
 
         checks = [

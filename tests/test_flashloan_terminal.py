@@ -22,7 +22,21 @@ import os
 import sys
 from unittest.mock import patch
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+
+# ── autouse fixture: prevent any real network init in all tests ───────────────
+
+@pytest.fixture(autouse=True)
+def _no_network_init(monkeypatch):
+    """Patch _init_flash_executor to a no-op so tests never trigger
+    AlchemyClient / RPC connectivity checks, regardless of env vars."""
+    monkeypatch.setattr(
+        "flashloan_terminal.FlashLoanTerminal._init_flash_executor",
+        lambda self: None,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
