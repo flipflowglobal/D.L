@@ -1,167 +1,444 @@
+# Copyright (c) 2026 Darcel King. All rights reserved.
+# SPDX-License-Identifier: BUSL-1.1
 """
-nexus_arb/flash_loan_executor.py
-=================================
+nexus_arb/flash_loan_executor.py — Python executor for NexusFlashReceiver.sol.
 
-Converts ``ArbitrageResult`` (Bellman-Ford negative-cycle output) into ABI-
-encoded calldata for the ``NexusFlashReceiver`` Solidity contract, which
-executes multi-hop flash-loan arbitrage in a single atomic transaction.
+Converts an ArbitrageOpportunity (from Bellman-Ford) into on-chain calldata
+and submits the `executeArbitrage()` transaction via the TransactionManager.
 
-Architecture
-------------
-  ArbitrageResult
-      └─ FlashLoanExecutor.build_calldata()
-              └─ [SwapStep, SwapStep, …]   ← one per cycle edge
-                     └─ ABI-encoded params passed to flashLoan(asset, amount, params)
+Architecture:
+  1. ArbitrageOpportunity describes a token cycle + pools
+  2. FlashLoanExecutor encodes each pool as a SwapStep struct
+  3. Calls NexusFlashReceiver.executeArbitrage(asset, amount, steps[])
+  4. TransactionManager handles EIP-1559 fees, nonce, and confirmation
+  5. Profit flows back to the owner wallet on-chain
 
-Formal Specification
---------------------
-  Preconditions:
-    - opp.has_cycle is True
-    - opp.cycle contains at least 3 tokens (A→B→…→A — at least one intermediate)
-    - opp.profit_ratio > 1.0
-    - All cycle_edges entries are valid (rate > 0)
-
-  Postconditions (execute):
-    - dry_run=True  → logs calldata, returns None, no network calls
-    - dry_run=False → broadcasts tx, returns tx_hash string
-
-  Invariants:
-    - Private key is never logged
-    - Validation runs before any encoding
+NexusFlashReceiver SwapStep struct:
+  uint8   dexType      (0=UniV3, 1=Curve, 2=Balancer, 3=Camelot)
+  address tokenIn
+  address tokenOut
+  uint256 amountIn     (0 = use full balance)
+  uint256 minAmountOut (slippage guard)
+  bytes   extraData    (DEX-specific ABI-encoded params)
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Optional
 
-logger = logging.getLogger(__name__)
+from web3 import Web3
+from eth_abi import encode as abi_encode
+
+log = logging.getLogger(__name__)
+
+# ── NexusFlashReceiver ABI (executeArbitrage entry point only) ────────────────
+_NEXUS_ABI = [
+    {
+        "name": "executeArbitrage",
+        "type": "function",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {"name": "asset",  "type": "address"},
+            {"name": "amount", "type": "uint256"},
+            {
+                "name": "steps",
+                "type": "tuple[]",
+                "components": [
+                    {"name": "dexType",      "type": "uint8"},
+                    {"name": "tokenIn",      "type": "address"},
+                    {"name": "tokenOut",     "type": "address"},
+                    {"name": "amountIn",     "type": "uint256"},
+                    {"name": "minAmountOut", "type": "uint256"},
+                    {"name": "extraData",    "type": "bytes"},
+                ],
+            },
+        ],
+        "outputs": [],
+    },
+    {
+        "name": "totalProfit",
+        "type": "function",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [{"name": "", "type": "uint256"}],
+    },
+    {
+        "name": "paused",
+        "type": "function",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [{"name": "", "type": "bool"}],
+    },
+]
+
+# DEX type constants — must match NexusFlashReceiver.sol
+DEX_UNISWAP_V3 = 0
+DEX_CURVE      = 1
+DEX_BALANCER   = 2
+DEX_CAMELOT_V3 = 3
+
+# Default DEX → type mapping
+_DEX_TYPE_MAP = {
+    "uniswap_v3":  DEX_UNISWAP_V3,
+    "uniswap":     DEX_UNISWAP_V3,
+    "sushiswap":   DEX_UNISWAP_V3,  # SushiSwap uses same V3 router interface
+    "curve":       DEX_CURVE,
+    "balancer":    DEX_BALANCER,
+    "balancer_v2": DEX_BALANCER,
+    "camelot_v3":  DEX_CAMELOT_V3,
+    "camelot":     DEX_CAMELOT_V3,
+}
+
+# Default Uniswap V3 fee tiers
+_DEX_DEFAULT_FEE = {
+    "uniswap_v3": 500,     # 0.05% — cheapest WETH/USDC pool
+    "sushiswap":  3000,    # 0.3%
+    "camelot_v3": 2500,    # 0.25% — Camelot default
+}
+
+# Known Balancer pool IDs for common pairs (mainnet)
+_BALANCER_POOL_IDS: dict[tuple[str, str], bytes] = {
+    # WETH/USDC 0.3% Balancer pool
+    ("WETH", "USDC"): bytes.fromhex(
+        "96646936b91d6b9d7d0c47c496afbf3d6ec7b6f8000200000000000000000019"
+    ),
+}
 
 
-# ── Data structures ────────────────────────────────────────────────────────────
+def _encode_uniswap_extra(fee: int, router_override: str = "") -> bytes:
+    """Encode (uint24 fee, address routerOverride) for UniV3/Camelot steps."""
+    router_addr = Web3.to_checksum_address(router_override) if router_override else \
+        "0x0000000000000000000000000000000000000000"
+    return abi_encode(["uint24", "address"], [fee, router_addr])
 
 
-@dataclass
+def _encode_balancer_extra(pool_id: bytes) -> bytes:
+    """Encode bytes32 poolId for Balancer steps."""
+    return abi_encode(["bytes32"], [pool_id])
+
+
+def _resolve_token_address(symbol: str) -> str:
+    """
+    Map common token symbols to mainnet addresses.
+    Falls back to the symbol itself if it looks like an address.
+    """
+    _ADDRESSES = {
+        "WETH":  "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "ETH":   "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "USDC":  "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "USDT":  "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "DAI":   "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "WBTC":  "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+        "FRAX":  "0x853d955aCEf822Db058eb8505911ED77F175b99e",
+        "LINK":  "0x514910771AF9Ca656af840dff83E8264EcF986CA",
+        "UNI":   "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984",
+        "AAVE":  "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9",
+    }
+    if symbol in _ADDRESSES:
+        return _ADDRESSES[symbol]
+    if symbol.startswith("0x") and len(symbol) == 42:
+        return Web3.to_checksum_address(symbol)
+    raise ValueError(f"Unknown token symbol: {symbol!r}. Provide a 0x address instead.")
+
+
 class SwapStep:
-    """
-    A single swap leg within the flash-loan arbitrage cycle.
+    """Python representation of the on-chain SwapStep struct."""
 
-    Fields mirror the ``SwapStep`` struct in ``NexusFlashReceiver.sol``:
-        struct SwapStep {
-            address tokenIn;
-            address tokenOut;
-            address pool;
-            uint24  fee;
-        }
-    """
-    token_in:  str
-    token_out: str
-    pool:      str = "0x0000000000000000000000000000000000000000"
-    fee:       int = 3000   # Uniswap V3 default: 0.3 %
+    __slots__ = ("dex_type", "token_in", "token_out", "amount_in", "min_amount_out", "extra_data")
 
+    def __init__(
+        self,
+        dex_type: int,
+        token_in: str,
+        token_out: str,
+        amount_in: int,
+        min_amount_out: int,
+        extra_data: bytes,
+    ) -> None:
+        self.dex_type      = dex_type
+        self.token_in      = token_in
+        self.token_out     = token_out
+        self.amount_in     = amount_in
+        self.min_amount_out = min_amount_out
+        self.extra_data    = extra_data
 
-# ── FlashLoanExecutor ──────────────────────────────────────────────────────────
+    def to_tuple(self) -> tuple:
+        return (
+            self.dex_type,
+            self.token_in,
+            self.token_out,
+            self.amount_in,
+            self.min_amount_out,
+            self.extra_data,
+        )
 
 
 class FlashLoanExecutor:
     """
-    Builds and optionally broadcasts flash-loan arbitrage transactions.
+    Submits flash loan arbitrage transactions to NexusFlashReceiver.sol.
 
-    Parameters
-    ----------
-    w3                : Web3 instance (optional in dry-run / offline mode)
-    contract_address  : deployed NexusFlashReceiver address
-    aave_pool_address : Aave V3 pool address for flash loans
-    borrow_asset      : ERC-20 token to borrow (default: WETH)
-    borrow_amount_wei : amount to borrow in wei
-    dry_run           : if True, encode calldata but never broadcast
+    Usage:
+        executor = FlashLoanExecutor(w3, contract_address, tx_manager)
+        receipt  = executor.execute(opportunity, borrow_amount_eth)
     """
 
-    # Aave V3 flash-loan premium (0.09 %)
-    AAVE_PREMIUM = 0.0009
+    # Minimum gas to reserve for the flash loan overhead (Aave callback + repay)
+    BASE_GAS     = 250_000
+    GAS_PER_STEP = 150_000   # Additional gas per swap step
 
     def __init__(
         self,
-        w3=None,
-        contract_address: str = "0x0000000000000000000000000000000000000000",
-        aave_pool_address: str = "0x0000000000000000000000000000000000000000",
-        borrow_asset: str      = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH mainnet
-        borrow_amount_wei: int = 10 ** 18,   # 1 WETH default
-        dry_run: bool          = True,
+        w3: Web3,
+        contract_address: str,
+        tx_manager,                       # engine.mainnet.TransactionManager
+        slippage: float = 0.005,          # 0.5% default slippage guard
     ) -> None:
-        self._w3               = w3
-        self.contract_address  = contract_address
-        self.aave_pool_address = aave_pool_address
-        self.borrow_asset      = borrow_asset
-        self.borrow_amount_wei = borrow_amount_wei
-        self.dry_run           = dry_run
-
-    # ── factory ───────────────────────────────────────────────────────────────
-
-    @classmethod
-    def from_env(cls, w3=None) -> "FlashLoanExecutor":
-        """
-        Construct from environment variables.
-
-        Required env vars:
-          NEXUS_CONTRACT_ADDRESS  — deployed NexusFlashReceiver address
-          AAVE_POOL_ADDRESS       — Aave V3 pool address
-          BORROW_ASSET            — token address to borrow (optional, default WETH)
-          BORROW_AMOUNT_ETH       — amount in ETH units (optional, default 1.0)
-          FLASH_DRY_RUN           — "false" to enable live mode (default dry-run)
-        """
-        contract  = os.getenv("NEXUS_CONTRACT_ADDRESS", "0x" + "0" * 40)
-        aave_pool = os.getenv("AAVE_POOL_ADDRESS",      "0x" + "0" * 40)
-        asset     = os.getenv("BORROW_ASSET",           "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-        amount    = int(float(os.getenv("BORROW_AMOUNT_ETH", "1.0")) * 10 ** 18)
-        dry       = os.getenv("FLASH_DRY_RUN", "true").lower() != "false"
-
-        return cls(
-            w3=w3,
-            contract_address=contract,
-            aave_pool_address=aave_pool,
-            borrow_asset=asset,
-            borrow_amount_wei=amount,
-            dry_run=dry,
+        self.w3               = w3
+        self.contract_address = Web3.to_checksum_address(contract_address)
+        self.tx_manager       = tx_manager
+        self.slippage         = slippage
+        self.contract         = w3.eth.contract(
+            address=self.contract_address,
+            abi=_NEXUS_ABI,
         )
 
-    # ── validation ────────────────────────────────────────────────────────────
+    # ── Public execute ────────────────────────────────────────────────────────
 
-    def _validate_opportunity(self, opp) -> None:
+    def execute(
+        self,
+        opportunity,
+        borrow_amount_eth: float,
+        eth_price_usd: float = 0.0,
+        dry_run: bool = False,
+    ):
         """
-        Strict validation — raises on any structural issue.
+        Convert an ArbitrageOpportunity (legacy) into an on-chain flash loan transaction.
 
-        Raises
-        ------
-        ValueError  if the opportunity fails any invariant
+        Args:
+            opportunity:       ArbitrageOpportunity from BellmanFord.detect() (legacy)
+            borrow_amount_eth: Amount of WETH to borrow (in ETH units)
+            eth_price_usd:     Current ETH price (informational only)
+            dry_run:           If True, build and log but do NOT broadcast
+
+        Returns:
+            TxReceipt (or None if dry_run=True)
         """
-        required = ("has_cycle", "cycle", "profit_ratio", "cycle_edges")
-        missing  = [f for f in required if not hasattr(opp, f)]
-        if missing:
-            raise ValueError(f"ArbitrageResult missing required fields: {missing}")
-
-        if not opp.has_cycle:
-            raise ValueError("has_cycle is False — no arbitrage opportunity")
-
-        unique_tokens = set(opp.cycle)
-        if len(unique_tokens) < 2:
+        # Validate opportunity structure before any on-chain work
+        if not opportunity.cycle or len(opportunity.cycle) < 3:
             raise ValueError(
-                f"Cycle must contain at least 2 unique tokens; got {sorted(unique_tokens)}"
+                f"ArbitrageOpportunity must have cycle of length ≥3, "
+                f"got: {opportunity.cycle!r}"
+            )
+        if not opportunity.pools or len(opportunity.pools) != len(opportunity.cycle) - 1:
+            raise ValueError(
+                f"ArbitrageOpportunity pools count ({len(opportunity.pools)}) "
+                f"must equal cycle length - 1 ({len(opportunity.cycle) - 1})"
             )
 
-        if len(opp.cycle) < 3:
+        return self._execute_cycle(
+            cycle=opportunity.cycle,
+            cycle_edges=None,
+            pools=opportunity.pools,
+            borrow_amount_eth=borrow_amount_eth,
+            dry_run=dry_run,
+        )
+
+    def execute_from_result(
+        self,
+        result,
+        borrow_amount_eth: float,
+        dry_run: bool = False,
+    ):
+        """
+        Execute a flash loan from a BellmanFordArb ArbitrageResult.
+
+        Args:
+            result:            ArbitrageResult from BellmanFordArb.find_best_arbitrage()
+            borrow_amount_eth: Amount of WETH to borrow (in ETH units)
+            dry_run:           If True, build and log but do NOT broadcast
+
+        Returns:
+            TxReceipt (or None if dry_run=True or no cycle detected)
+        """
+        if not result.has_cycle or len(result.cycle) < 3:
+            log.info("[FlashLoanExecutor] No profitable cycle in ArbitrageResult — skipping")
+            return None
+
+        return self._execute_cycle(
+            cycle=result.cycle,
+            cycle_edges=result.cycle_edges,
+            pools=None,
+            borrow_amount_eth=borrow_amount_eth,
+            dry_run=dry_run,
+        )
+
+    def _execute_cycle(
+        self,
+        cycle: list,
+        cycle_edges,
+        pools,
+        borrow_amount_eth: float,
+        dry_run: bool,
+    ):
+        """Shared execution path for both execute() and execute_from_result()."""
+        # Check contract is not paused
+        if self._is_paused():
+            log.warning("[FlashLoanExecutor] Contract is paused — skipping")
+            return None
+
+        borrow_wei   = self.w3.to_wei(borrow_amount_eth, "ether")
+        borrow_token = _resolve_token_address(cycle[0])
+        steps        = self._build_steps_from_cycle(cycle, cycle_edges, pools, borrow_wei)
+        gas_limit    = self.BASE_GAS + self.GAS_PER_STEP * len(steps)
+
+        log.info(
+            f"[FlashLoanExecutor] cycle={cycle} "
+            f"borrow={borrow_amount_eth} ETH  steps={len(steps)}  gas={gas_limit:,}"
+        )
+
+        if dry_run:
+            log.info("[FlashLoanExecutor] dry_run=True — not broadcasting")
+            return None
+
+        # ABI-encode the calldata and dispatch via TransactionManager
+        calldata = self.contract.encodeABI(
+            fn_name="executeArbitrage",
+            args=[borrow_token, borrow_wei, [s.to_tuple() for s in steps]],
+        )
+        tx = self.tx_manager.build_tx(
+            to=self.contract_address,
+            value_wei=0,
+            data=Web3.to_bytes(hexstr=calldata),
+            gas_limit=gas_limit,
+        )
+        return self.tx_manager.send_and_confirm(tx)
+
+    # ── Step builder ──────────────────────────────────────────────────────────
+
+    def _build_steps_from_cycle(
+        self,
+        cycle: list,
+        cycle_edges,        # list of (from, to, rate) tuples from BellmanFordArb, or None
+        pools,              # legacy PoolPrice list, or None
+        borrow_wei: int,
+    ) -> list[SwapStep]:
+        """
+        Convert a token cycle into a list of SwapStep objects.
+
+        Supports two input formats:
+          1. cycle_edges from BellmanFordArb (from, to, rate) — new API
+          2. pools list of PoolPrice objects — legacy API
+        """
+        steps: list[SwapStep] = []
+        hops  = list(zip(cycle[:-1], cycle[1:]))
+
+        for i, (token_in_sym, token_out_sym) in enumerate(hops):
+            token_in  = _resolve_token_address(token_in_sym)
+            token_out = _resolve_token_address(token_out_sym)
+
+            if pools is not None:
+                # Legacy path: use PoolPrice info
+                pool     = pools[i]
+                dex_type = _DEX_TYPE_MAP.get(pool.dex.lower(), DEX_UNISWAP_V3)
+                rate     = getattr(pool, "price_after_fee", 1.0)
+                extra    = self._build_extra_data_from_pool(dex_type, pool, token_in_sym, token_out_sym)
+            elif cycle_edges is not None and i < len(cycle_edges):
+                # New path: use cycle_edges (from, to, rate) from BellmanFordArb
+                _, _, rate = cycle_edges[i]
+                dex_type = DEX_UNISWAP_V3  # default DEX; no DEX metadata in new format
+                extra    = _encode_uniswap_extra(_DEX_DEFAULT_FEE.get("uniswap_v3", 500))
+            else:
+                rate     = 1.0
+                dex_type = DEX_UNISWAP_V3
+                extra    = _encode_uniswap_extra(500)
+
+            min_out = int(borrow_wei * rate * (1 - self.slippage)) if i == 0 else 0
+
+            steps.append(SwapStep(
+                dex_type=dex_type,
+                token_in=token_in,
+                token_out=token_out,
+                amount_in=0,         # 0 = use full contract balance (chained swaps)
+                min_amount_out=min_out,
+                extra_data=extra,
+            ))
+
+        return steps
+
+    def _build_steps(self, opportunity, borrow_wei: int) -> list[SwapStep]:
+        """Legacy step builder for ArbitrageOpportunity objects."""
+        return self._build_steps_from_cycle(
+            cycle=opportunity.cycle,
+            cycle_edges=None,
+            pools=opportunity.pools,
+            borrow_wei=borrow_wei,
+        )
+
+    def _build_extra_data_from_pool(
+        self,
+        dex_type: int,
+        pool,
+        token_in_sym: str,
+        token_out_sym: str,
+    ) -> bytes:
+        """Build DEX-specific ABI-encoded extra data for a swap step."""
+        return self._build_extra_data(dex_type, pool, token_in_sym, token_out_sym)
+
+    def _build_extra_data(
+        self,
+        dex_type: int,
+        pool,
+        token_in_sym: str,
+        token_out_sym: str,
+    ) -> bytes:
+        """Build DEX-specific ABI-encoded extra data for a swap step."""
+        if dex_type in (DEX_UNISWAP_V3, DEX_CAMELOT_V3):
+            fee = _DEX_DEFAULT_FEE.get(pool.dex.lower(), 500)
+            return _encode_uniswap_extra(fee)
+
+        if dex_type == DEX_BALANCER:
+            pool_id_key = (token_in_sym, token_out_sym)
+            pool_id     = _BALANCER_POOL_IDS.get(
+                pool_id_key,
+                # Default: zero pool ID (caller must set correct ID)
+                b"\x00" * 32,
+            )
+            return _encode_balancer_extra(pool_id)
+
+        if dex_type == DEX_CURVE:
+            # Curve Router extra data is complex (route + swap_params + pools)
+            # For now return empty bytes — the contract handles Curve router calls
+            # in a separate integration path
+            return b""
+
+        return b""
+
+    # ── Validation ───────────────────────────────────────────────────────────
+
+    def _validate_opportunity(self, opportunity) -> None:
+        """
+        Validate an ArbitrageOpportunity or ArbitrageResult before execution.
+
+        Raises ValueError for:
+          - cycle shorter than 3 tokens
+          - pools count != cycle length - 1 (legacy ArbitrageOpportunity only)
+        """
+        cycle = getattr(opportunity, "cycle", None) or []
+        if len(cycle) < 3:
             raise ValueError(
-                f"Cycle path too short (need ≥3 entries including repeated start): {opp.cycle}"
+                f"Opportunity cycle must have ≥3 tokens, got: {cycle!r}"
+            )
+        # Legacy ArbitrageOpportunity has a pools attribute
+        pools = getattr(opportunity, "pools", None)
+        if pools is not None and len(pools) != len(cycle) - 1:
+            raise ValueError(
+                f"Opportunity pools count ({len(pools)}) must equal "
+                f"cycle length - 1 ({len(cycle) - 1})"
             )
 
-        if opp.profit_ratio <= 1.0:
-            raise ValueError(
-                f"Unprofitable cycle: profit_ratio={opp.profit_ratio:.6f} ≤ 1.0"
-            )
-
-    def validate_opportunity(self, opp) -> Tuple[bool, str]:
+    def validate_opportunity(self, opportunity) -> tuple:
         """
         Non-raising validation — suitable for pre-flight checks.
 
@@ -171,131 +448,34 @@ class FlashLoanExecutor:
         (False, <reason string>)  if any check fails
         """
         try:
-            self._validate_opportunity(opp)
+            self._validate_opportunity(opportunity)
             return True, "ok"
         except ValueError as exc:
             return False, str(exc)
 
-    # ── calldata builder ──────────────────────────────────────────────────────
+    # ── Status helpers ────────────────────────────────────────────────────────
 
-    def _build_swap_steps(self, opp) -> List[SwapStep]:
-        """
-        Convert cycle edges to ``SwapStep`` objects.
-
-        Each edge (token_in, token_out, rate) from the Bellman-Ford result
-        maps to one swap leg.  Pool address defaults to the zero address
-        here; real deployments resolve pools from a registry.
-        """
-        steps = []
-        for token_in, token_out, _rate in opp.cycle_edges:
-            steps.append(SwapStep(token_in=token_in, token_out=token_out))
-        return steps
-
-    def build_calldata(self, opp) -> bytes:
-        """
-        Encode the full flash-loan calldata for NexusFlashReceiver.
-
-        The ``params`` bytes field is a simple UTF-8 JSON encoding of swap
-        steps.  Production deployments should use ABI-encoding or RLP for
-        gas efficiency; this implementation prioritises readability and
-        offline testability.
-
-        Parameters
-        ----------
-        opp : ArbitrageResult  (validated before encoding)
-
-        Returns
-        -------
-        bytes  ABI-compatible params payload
-
-        Raises
-        ------
-        ValueError  if the opportunity fails validation
-        """
-        self._validate_opportunity(opp)
-
-        steps = self._build_swap_steps(opp)
-        import json
-        payload = json.dumps([
-            {"tokenIn": s.token_in, "tokenOut": s.token_out,
-             "pool": s.pool, "fee": s.fee}
-            for s in steps
-        ], separators=(",", ":"))
-        encoded = payload.encode("utf-8")
-
-        logger.debug(
-            "Built calldata for %d-hop cycle | profit_ratio=%.6f | %d bytes",
-            len(steps), opp.profit_ratio, len(encoded),
-        )
-        return encoded
-
-    # ── execution ─────────────────────────────────────────────────────────────
-
-    def execute(self, opp, private_key: Optional[str] = None) -> Optional[str]:
-        """
-        Encode calldata and optionally broadcast the flash-loan transaction.
-
-        Parameters
-        ----------
-        opp         : ArbitrageResult (must pass validation)
-        private_key : hex private key (required when dry_run=False)
-
-        Returns
-        -------
-        str   tx hash (0x…) when dry_run=False and broadcast succeeds
-        None  when dry_run=True
-
-        Raises
-        ------
-        ValueError  if validation fails, or dry_run=False with no w3/key
-        RuntimeError  if transaction broadcast fails
-        """
-        is_valid, reason = self.validate_opportunity(opp)
-        if not is_valid:
-            raise ValueError(f"Opportunity rejected: {reason}")
-
-        calldata = self.build_calldata(opp)
-
-        net_profit_estimate = (opp.profit_ratio - 1.0 - self.AAVE_PREMIUM)
-        logger.info(
-            "FlashLoan | cycle=%s | profit_ratio=%.4f | net_est=%.4f%% | dry_run=%s",
-            "→".join(opp.cycle),
-            opp.profit_ratio,
-            net_profit_estimate * 100,
-            self.dry_run,
-        )
-
-        if self.dry_run:
-            logger.info(
-                "DRY RUN — calldata (%d bytes): %s…", len(calldata), calldata[:80]
-            )
-            return None
-
-        # Live broadcast path
-        if self._w3 is None:
-            raise ValueError("w3 is required for live execution (dry_run=False)")
-        if not private_key:
-            raise ValueError("private_key is required for live execution (dry_run=False)")
-
+    def _is_paused(self) -> bool:
         try:
-            account = self._w3.eth.account.from_key(private_key)
-            nonce   = self._w3.eth.get_transaction_count(account.address, "pending")
+            return bool(self.contract.functions.paused().call())
+        except Exception:
+            return False
 
-            tx = {
-                "to":       self.contract_address,
-                "from":     account.address,
-                "nonce":    nonce,
-                "gas":      500_000,
-                "gasPrice": self._w3.eth.gas_price,
-                "chainId":  self._w3.eth.chain_id,
-                "data":     calldata,
-                "value":    0,
-            }
-            signed  = self._w3.eth.account.sign_transaction(tx, private_key)
-            tx_hash = self._w3.eth.send_raw_transaction(signed.raw_transaction)
-            hex_hash = tx_hash.hex() if isinstance(tx_hash, bytes) else tx_hash
-            logger.info("Flash loan tx sent: %s", hex_hash)
-            return hex_hash
+    def total_profit_eth(self) -> float:
+        """Read accumulated on-chain profit from the contract."""
+        try:
+            wei = self.contract.functions.totalProfit().call()
+            return wei / 1e18
+        except Exception:
+            return 0.0
 
-        except Exception as exc:
-            raise RuntimeError(f"Flash loan broadcast failed: {exc}") from exc
+    @classmethod
+    def from_env(cls, w3: Web3, tx_manager, slippage: float = 0.005):
+        """Construct from environment variables (FLASH_RECEIVER_ADDRESS)."""
+        addr = os.getenv("FLASH_RECEIVER_ADDRESS")
+        if not addr:
+            raise ValueError(
+                "FLASH_RECEIVER_ADDRESS not set. "
+                "Deploy NexusFlashReceiver.sol and set this variable."
+            )
+        return cls(w3, addr, tx_manager, slippage)
