@@ -22,6 +22,15 @@ import os
 import sys
 from setuptools import setup, Extension
 
+
+def _is_termux() -> bool:
+    """Return True when running inside Android Termux."""
+    return (
+        "TERMUX_VERSION" in os.environ
+        or "ANDROID_ROOT" in os.environ
+        or os.path.isdir("/data/data/com.termux")
+    )
+
 try:
     from Cython.Build import cythonize
     from Cython.Compiler import Options as CythonOptions
@@ -51,8 +60,20 @@ if sys.platform == "win32":
     # MSVC flags
     _COMPILE = ["/O2", "/fp:fast", "/arch:AVX2"]
     _LINK    = []
+elif _is_termux():
+    # Android Termux / ARM64 — skip -march=native (bionic libc may not expose
+    # every CPU extension the flag would assume); -O2 is safe across all ARMs.
+    _COMPILE = [
+        "-O2",
+        "-ffast-math",
+        "-funroll-loops",
+        "-fno-wrapv",
+        "-fomit-frame-pointer",
+        "-DNPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION",
+    ]
+    _LINK = ["-O2"]
 else:
-    # GCC / Clang flags
+    # GCC / Clang flags (Linux desktop / macOS / WSL)
     _COMPILE = [
         "-O3",
         "-march=native",

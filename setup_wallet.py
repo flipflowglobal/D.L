@@ -33,8 +33,7 @@ def _save_wallet(address: str, private_key: str) -> None:
 def _patch_env(address: str, private_key: str) -> None:
     """Write / overwrite WALLET_ADDRESS and PRIVATE_KEY in .env."""
     if not os.path.exists(ENV_FILE):
-        with open(ENV_FILE, "w", encoding="utf-8") as _f:
-            pass
+        open(ENV_FILE, "w", encoding="utf-8").close()
 
     with open(ENV_FILE, encoding="utf-8") as f:
         lines = f.readlines()

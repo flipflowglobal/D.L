@@ -15,7 +15,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -78,6 +77,17 @@ class Memory:
         """
         try:
             async with aiosqlite.connect(self.db_path) as db:
+                # Auto-create table on first access (handles test environments where
+                # lifespan / init_db() may not have been called yet).
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS memory (
+                        agent_id TEXT NOT NULL,
+                        key      TEXT NOT NULL,
+                        value    TEXT,
+                        PRIMARY KEY (agent_id, key)
+                    )
+                """)
+                await db.commit()
                 async with db.execute(
                     "SELECT value FROM memory WHERE agent_id = ? AND key = ?",
                     (agent_id, key),
