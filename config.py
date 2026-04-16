@@ -34,18 +34,6 @@ class _Config:
     MAX_GAS_LIMIT:      int   = int(os.getenv("MAX_GAS_LIMIT",       "500000"))
     GAS_FEE_BUFFER:     float = float(os.getenv("GAS_FEE_BUFFER_MULTIPLIER", "1.15"))
 
-    # ── Alchemy-specific ──────────────────────────────────────────────────────
-    # ALCHEMY_API_KEY is an alternative to a full RPC_URL.
-    # If set and RPC_URL is empty, RPC_URL is derived automatically.
-    ALCHEMY_API_KEY: str | None = os.getenv("ALCHEMY_API_KEY")
-    CHAIN_ID:        int        = int(os.getenv("CHAIN_ID", "1"))   # 1 = mainnet
-
-    # ── Transaction confirmation ──────────────────────────────────────────────
-    TX_CONFIRM_TIMEOUT: int   = int(os.getenv("TX_CONFIRM_TIMEOUT",  "120"))
-    TX_BUMP_TIMEOUT:    int   = int(os.getenv("TX_BUMP_TIMEOUT",     "45"))
-    MAX_GAS_LIMIT:      int   = int(os.getenv("MAX_GAS_LIMIT",       "500000"))
-    GAS_FEE_BUFFER:     float = float(os.getenv("GAS_FEE_BUFFER_MULTIPLIER", "1.15"))
-
     # ── Trading parameters ────────────────────────────────────────────────────
     TRADE_SIZE_ETH:    float = float(os.getenv("TRADE_SIZE_ETH",    "0.05"))
     SCAN_INTERVAL:     int   = int(os.getenv("SCAN_INTERVAL",       "30"))
