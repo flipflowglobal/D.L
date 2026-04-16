@@ -147,7 +147,12 @@ curl -L -o ~/.solc-arm/solc-0.8.20 \
   "https://github.com/ethereum/solc-bin/raw/gh-pages/linux-aarch64/solc-linux-aarch64-v0.8.20+commit.a1b79de6"
 chmod +x ~/.solc-arm/solc-0.8.20
 
-# Verify
+# Verify binary integrity (recommended):
+sha256sum ~/.solc-arm/solc-0.8.20
+# Compare the hash against the official list at:
+# https://github.com/ethereum/solc-bin/blob/gh-pages/linux-aarch64/list.json
+
+# Verify it runs:
 ~/.solc-arm/solc-0.8.20 --version
 ```
 
@@ -450,10 +455,13 @@ Requires `FLASH_RECEIVER_ADDRESS` pointing to a deployed `NexusFlashReceiver`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AAVE_POOL_ADDRESS` | `0x6Ae43...` | Aave V3 Pool |
-| `WETH_ADDRESS` | `0xC558D...` | WETH token |
-| `UNISWAP_ROUTER_ADDRESS` | `0xE5924...` | Uniswap V3 SwapRouter |
+| `AAVE_POOL_ADDRESS` | `0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951` | Aave V3 Pool (Sepolia) |
+| `WETH_ADDRESS` | `0xC558DBdd856501FCd9aaF1E62eae57A9F0629a3c` | WETH token (Sepolia) |
+| `UNISWAP_ROUTER_ADDRESS` | `0xE592427A0AEce92De3Edee1F18E0157C05861564` | Uniswap V3 SwapRouter |
 | `CHAIN_ID` | `1` | 1 = Mainnet, 11155111 = Sepolia |
+
+> **Note**: Mainnet Aave V3 Pool address: `0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2`.
+> `compiler.py` selects the correct pool address automatically based on `CHAIN_ID`.
 
 ---
 
@@ -516,6 +524,10 @@ mkdir -p ~/.solc-arm
 curl -L -o ~/.solc-arm/solc-0.8.20 \
   "https://github.com/ethereum/solc-bin/raw/gh-pages/linux-aarch64/solc-linux-aarch64-v0.8.20+commit.a1b79de6"
 chmod +x ~/.solc-arm/solc-0.8.20
+
+# Verify binary integrity:
+sha256sum ~/.solc-arm/solc-0.8.20
+# Cross-reference with https://github.com/ethereum/solc-bin/blob/gh-pages/linux-aarch64/list.json
 ```
 
 **Problem**: All compiler layers fail
@@ -606,6 +618,7 @@ Before going live on mainnet:
 
 - [ ] Test everything on Sepolia first (≥ 1 hour of operation)
 - [ ] `vault/wallet.json` permissions: `chmod 600 vault/wallet.json`
+- [ ] `.env` file permissions: `chmod 600 .env` (contains PRIVATE_KEY)
 - [ ] `.env` not committed: `git check-ignore -v .env`
 - [ ] `DRY_RUN=true` for initial mainnet testing
 - [ ] `GAS_BUDGET_USD` set to cap gas costs
