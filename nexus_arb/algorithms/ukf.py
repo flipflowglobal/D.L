@@ -252,5 +252,3 @@ class UnscentedKalmanFilter:
         """Current state covariance, or None if not initialized."""
         return self._P.copy() if self._P is not None else None
 
-
-
