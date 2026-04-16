@@ -1,10 +1,13 @@
-name: CI
+name: System Validation
 
 on:
   push:
     branches: ["**"]
   pull_request:
     branches: ["main"]
+
+permissions:
+  contents: read
 
 jobs:
   # ── Lint ──────────────────────────────────────────────────────────────────
@@ -74,6 +77,10 @@ jobs:
               'intelligence.autonomy',
               'vault.wallet_config',
               'vault.wallet_manager',
+              'kernel.watchdog_kernel',
+              'agents.watchdog_agent',
+              'core.state_manager',
+              'core.integrity',
               'tools',
               'database',
               'main',
@@ -95,6 +102,16 @@ jobs:
 
       - name: Run tests
         run: pytest --tb=short -q
+
+      - name: Verify integrity check
+        run: |
+          python -c "
+          from core.integrity import IntegrityChecker
+          checker = IntegrityChecker()
+          result = checker.verify_all()
+          print(f'Integrity: {result[\"checked\"]} files checked, passed={result[\"passed\"]}')
+          assert result['passed'], f'Integrity check failed: {result}'
+          "
 
   # ── Docker build ──────────────────────────────────────────────────────────
   docker:
