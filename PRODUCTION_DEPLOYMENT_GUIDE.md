@@ -62,8 +62,12 @@ nano .env   # set RPC_URL to your Alchemy/Infura HTTPS endpoint
 # Paper trading (safe — no transactions)
 python trade.py
 
-# Live mainnet trading
+# Live mainnet trading (EIP-1559, SwapRouter02)
 python trade.py --live
+
+# Live flash loan arbitrage via NexusFlashReceiver.sol
+# Requires FLASH_RECEIVER_ADDRESS set in .env
+python trade.py --flash
 
 # FastAPI cognitive agent server
 uvicorn main:app --host 0.0.0.0 --port 8010
@@ -140,10 +144,12 @@ nohup python trade.py > logs/trade.log 2>&1 &
 ## Running Tests
 
 ```bash
-pytest                        # all 30 tests
+pytest                        # all 107 tests
 pytest -v                     # verbose
 pytest tests/test_engine.py   # engine only
 pytest tests/test_api.py      # API only
+pytest tests/test_mainnet.py  # mainnet components (AlchemyClient, TransactionManager, FlashLoanExecutor)
+pytest tests/test_nexus_arb.py # nexus_arb algorithms
 ```
 
 ---
@@ -156,6 +162,12 @@ See `.env.example` for full documentation of every variable.
 - `RPC_URL` — Ethereum mainnet RPC (Alchemy/Infura HTTPS)
 - `PRIVATE_KEY` — 64-char hex private key (set by `setup_wallet.py`)
 - `WALLET_ADDRESS` — Ethereum address (set by `setup_wallet.py`)
+
+**Required for flash loan mode (`--flash`):**
+- All of the above, plus:
+- `FLASH_RECEIVER_ADDRESS` — Deployed `NexusFlashReceiver.sol` contract address
+- `FLASH_LOAN_AMOUNT_ETH` — WETH borrow size (default: `1.0`)
+- `DRY_RUN=false` — Set to `false` to broadcast transactions (default: `true`)
 
 **Optional tuning:**
 - `TRADE_SIZE_ETH=0.05` — ETH per trade

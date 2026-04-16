@@ -170,7 +170,7 @@ class AgentLoop:
                 self._price_engine = None
 
         # Build engine in executor (one-time synchronous import + init)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         eng  = await loop.run_in_executor(None, self._build_engine)
 
         self.cycle_count = 0

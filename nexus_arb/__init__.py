@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Darcel King. All rights reserved.
+# SPDX-License-Identifier: BUSL-1.1
 """
 nexus_arb — AUREON Mathematical Engine
 =======================================
@@ -9,6 +11,7 @@ Packages:
                   Thompson Sampling DEX bandit, PPO trading policy
   math/        — Gas cost models, bonding curves, Markov chain analysis,
                   M/M/1 queueing theory for mempool design
+  flash_loan_executor — Python executor for NexusFlashReceiver.sol
 
 Design Invariants:
   - All modules are pure-Python (numpy optional) — safe to import without RPC
@@ -25,10 +28,25 @@ from nexus_arb.algorithms import (
     TradingPolicy,
 )
 
+from .flash_loan_executor import (
+    FlashLoanExecutor,
+    SwapStep,
+    DEX_UNISWAP_V3,
+    DEX_CURVE,
+    DEX_BALANCER,
+    DEX_CAMELOT_V3,
+)
+
 __all__ = [
     "BellmanFordArb",
     "CMAES",
     "UnscentedKalmanFilter",
     "ThompsonSamplingBandit",
     "TradingPolicy",
+    "FlashLoanExecutor",
+    "SwapStep",
+    "DEX_UNISWAP_V3",
+    "DEX_CURVE",
+    "DEX_BALANCER",
+    "DEX_CAMELOT_V3",
 ]
