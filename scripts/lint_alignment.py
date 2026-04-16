@@ -93,18 +93,21 @@ class _Visitor(ast.NodeVisitor):
 
     # -- datetime.utcnow() deprecation -----------------------------------
     def visit_Attribute(self, node: ast.Attribute) -> None:
-        if (
-            node.attr == "utcnow"
-            and isinstance(node.value, ast.Attribute)
-            and getattr(node.value, "attr", None) == "datetime"
-        ):
-            self.findings.append(Finding(
-                file=self.filepath,
-                line=node.lineno,
-                rule="no-utcnow",
-                severity="warning",
-                message="datetime.datetime.utcnow() is deprecated — use datetime.now(timezone.utc)",
-            ))
+        if node.attr == "utcnow":
+            # Match both `datetime.datetime.utcnow()` and `datetime.utcnow()`
+            is_deprecated = False
+            if isinstance(node.value, ast.Attribute) and node.value.attr == "datetime":
+                is_deprecated = True
+            elif isinstance(node.value, ast.Name) and node.value.id == "datetime":
+                is_deprecated = True
+            if is_deprecated:
+                self.findings.append(Finding(
+                    file=self.filepath,
+                    line=node.lineno,
+                    rule="no-utcnow",
+                    severity="warning",
+                    message="datetime.datetime.utcnow() is deprecated — use datetime.now(timezone.utc)",
+                ))
         self.generic_visit(node)
 
 

@@ -5,6 +5,9 @@ on:
     branches: [main, develop]
     paths-ignore: ['**.md', 'docs/**']
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-lint-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
@@ -68,8 +71,9 @@ jobs:
             > solhint.out 2>&1 || true
 
           # ── Rust: clippy (dex-oracle + tx-engine) ───────────────────────
+          touch clippy.out
           (cd dex-oracle && cargo clippy --all-targets -- -D warnings) \
-            > clippy.out 2>&1 || true
+            >> clippy.out 2>&1 || true
           (cd tx-engine  && cargo clippy --all-targets -- -D warnings) \
             >> clippy.out 2>&1 || true
 
@@ -79,15 +83,15 @@ jobs:
 
           # Merge audit results into a single file
           python3 -c "
-          import json, pathlib
+          import json, pathlib, sys
           results = []
           for f in ['audit-dex.json', 'audit-tx.json']:
               p = pathlib.Path(f)
               if p.exists() and p.stat().st_size > 0:
                   try:
                       results.append(json.loads(p.read_text()))
-                  except json.JSONDecodeError:
-                      pass
+                  except json.JSONDecodeError as exc:
+                      print(f'⚠️  {f}: malformed JSON — {exc}', file=sys.stderr)
           pathlib.Path('audit.json').write_text(json.dumps(results, indent=2))
           "
 
@@ -103,7 +107,11 @@ jobs:
             --inputs pyflakes.out solhint.out clippy.out audit.json alignment.out \
             > merkle.json
           cat merkle.json
-          echo "merkle_root=$(python3 -c "import json; print(json.load(open('merkle.json'))['root'])")" >> $GITHUB_OUTPUT
+          echo "merkle_root=$(python3 -c "
+          import json
+          with open('merkle.json') as f:
+              print(json.load(f)['root'])
+          ")" >> $GITHUB_OUTPUT
 
       # ── Enforce Gate ─────────────────────────────────────────────────────
       - name: Enforce Gate
@@ -119,8 +127,8 @@ jobs:
             FAILED=1
           fi
 
-          # Clippy warnings treated as errors
-          if grep -q "^error" clippy.out 2>/dev/null; then
+          # Clippy warnings treated as errors (-D warnings makes them errors)
+          if grep -qE "(^error|error\[|error:)" clippy.out 2>/dev/null; then
             echo "::group::clippy errors"
             cat clippy.out
             echo "::endgroup::"

@@ -64,7 +64,8 @@ def main() -> int:
     leaves = []
     for path in args.inputs:
         if os.path.isfile(path):
-            data = open(path, "rb").read()
+            with open(path, "rb") as fh:
+                data = fh.read()
         else:
             data = b""  # missing file ⇒ empty ⇒ clean
         h = _sha256(data)
