@@ -37,7 +37,7 @@ class _Config:
     # ── Alchemy-specific ──────────────────────────────────────────────────────
     # ALCHEMY_API_KEY is an alternative to a full RPC_URL.
     # If set and RPC_URL is empty, RPC_URL is derived automatically.
-    ALCHEMY_API_KEY: str | None = os.getenv("ALCHEMY_API_KEY")
+    ALCHEMY_API_KEY: Optional[str] = os.getenv("ALCHEMY_API_KEY")
     CHAIN_ID:        int        = int(os.getenv("CHAIN_ID", "1"))   # 1 = mainnet
 
     # ── Transaction confirmation ──────────────────────────────────────────────
