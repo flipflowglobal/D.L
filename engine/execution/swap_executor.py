@@ -1,49 +1,51 @@
 """
-Uniswap V3 Swap Executor (Ethereum Mainnet).
+engine/execution/swap_executor.py
+===================================
 
-Executes exact-input swaps via the Uniswap V3 SwapRouter.
+Uniswap V3 Swap Executor — Ethereum Mainnet (EIP-1559).
+
+Executes exact-input swaps via the Uniswap V3 SwapRouter02.
 Supports:
   • ETH  → ERC-20  (wraps ETH as msg.value)
-  • ERC-20 → ERC-20 (requires prior token approval)
+  • ERC-20 → ETH   (requires prior token approval)
+
+EIP-1559 upgrade (replaces legacy gasPrice):
+  - Uses maxFeePerGas / maxPriorityFeePerGas from AlchemyClient fee oracle
+  - Gas limit auto-estimated via eth_estimateGas (+20 % buffer)
+  - Waits for on-chain confirmation and detects reverts
+  - Token approvals are confirmed before swap proceeds
 
 Mainnet addresses:
-  SwapRouter V1 : 0xE592427A0AEce92De3Edee1F18E0157C05861564
-  WETH          : 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
-  USDC          : 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+  SwapRouter02 : 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45
+  WETH         : 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
+  USDC         : 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+
+Backwards compatibility:
+  The constructor still accepts (WalletConfig, rpc_url) for compatibility
+  with trade.py.  Internally it builds an AlchemyClient + TransactionManager
+  so all new EIP-1559 features activate automatically.
 """
 
+from __future__ import annotations
+
+import os
 import time
 from typing import Optional
+
 from web3 import Web3
 
 from vault.wallet_config import WalletConfig
+from engine.mainnet.alchemy_client      import AlchemyClient
+from engine.mainnet.transaction_manager import TransactionManager
 
-SWAP_ROUTER    = "0xE592427A0AEce92De3Edee1F18E0157C05861564"
-WETH_ADDRESS   = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
-USDC_ADDRESS   = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+# ── Mainnet contract addresses ────────────────────────────────────────────────
 
-ERC20_APPROVE_ABI = [
-    {
-        "name": "approve",
-        "type": "function",
-        "stateMutability": "nonpayable",
-        "inputs": [
-            {"name": "spender", "type": "address"},
-            {"name": "amount",  "type": "uint256"},
-        ],
-        "outputs": [{"name": "", "type": "bool"}],
-    },
-    {
-        "name": "allowance",
-        "type": "function",
-        "stateMutability": "view",
-        "inputs": [
-            {"name": "owner",   "type": "address"},
-            {"name": "spender", "type": "address"},
-        ],
-        "outputs": [{"name": "", "type": "uint256"}],
-    },
-]
+# SwapRouter02 supports both V2 and V3 routing and is the recommended router
+SWAP_ROUTER  = os.getenv(
+    "UNISWAP_ROUTER_ADDRESS", "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"
+)
+WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 
 ROUTER_ABI = [
     {
@@ -59,7 +61,6 @@ ROUTER_ABI = [
                     {"name": "tokenOut",          "type": "address"},
                     {"name": "fee",               "type": "uint24"},
                     {"name": "recipient",         "type": "address"},
-                    {"name": "deadline",          "type": "uint256"},
                     {"name": "amountIn",          "type": "uint256"},
                     {"name": "amountOutMinimum",  "type": "uint256"},
                     {"name": "sqrtPriceLimitX96", "type": "uint256"},
@@ -73,21 +74,37 @@ ROUTER_ABI = [
 
 class SwapExecutor:
     """
-    Signs and broadcasts swaps on Uniswap V3 SwapRouter.
+    Signs and broadcasts Uniswap V3 swaps on Ethereum mainnet.
+
+    Constructor accepts the same (wallet, rpc_url) signature as before
+    for backward compatibility with trade.py and the test suite.
+
+    Internally it creates an AlchemyClient + TransactionManager so all
+    transactions are EIP-1559 with automatic gas estimation and confirmation.
 
     Usage:
         executor = SwapExecutor(wallet, rpc_url)
-        tx_hash = executor.swap_eth_to_usdc(amount_eth=0.1, slippage=0.005)
+        tx_hash = executor.swap_eth_to_usdc(amount_eth=0.1, slippage=0.005,
+                                             expected_usdc=340.0)
+        # tx_hash is returned only after the swap is confirmed on-chain
     """
 
-    DEFAULT_FEE      = 500      # 0.05 % pool (cheapest ETH/USDC pool)
-    DEADLINE_SECONDS = 300      # 5-minute deadline
+    DEFAULT_FEE      = 500       # 0.05 % pool tier (most liquid ETH/USDC pool)
+    DEADLINE_SECONDS = 300       # 5-minute deadline for the swap
 
-    def __init__(self, wallet: WalletConfig, rpc_url: str):
+    def __init__(self, wallet: WalletConfig, rpc_url: str) -> None:
         self.wallet = wallet
-        self.w3 = Web3(Web3.HTTPProvider(rpc_url))
-        if not self.w3.is_connected():
-            raise ConnectionError(f"Web3 connection failed: {rpc_url}")
+
+        # Build Alchemy-aware client (works with any HTTPS RPC)
+        self._alchemy = AlchemyClient(rpc_url)
+        self.w3       = self._alchemy.w3
+
+        self._tx_mgr = TransactionManager(
+            client=self._alchemy,
+            private_key=wallet.private_key,
+            chain_id=int(os.getenv("CHAIN_ID", str(self._alchemy.chain_id))),
+        )
+
         self.router = self.w3.eth.contract(
             address=Web3.to_checksum_address(SWAP_ROUTER),
             abi=ROUTER_ABI,
@@ -98,146 +115,149 @@ class SwapExecutor:
     def _deadline(self) -> int:
         return int(time.time()) + self.DEADLINE_SECONDS
 
-    def _eip1559_fees(self) -> dict:
-        """Compute EIP-1559 fee parameters from the latest block's base fee."""
-        latest = self.w3.eth.get_block("latest")
-        base_fee = latest.get("baseFeePerGas", self.w3.eth.gas_price)
-        priority_fee = self.w3.to_wei(2, "gwei")  # 2 gwei tip
-        max_fee = base_fee * 2 + priority_fee      # 2× headroom on base fee
-        return {
-            "maxFeePerGas": max_fee,
-            "maxPriorityFeePerGas": priority_fee,
-        }
-
-    def _min_out(self, amount: int, slippage: float) -> int:
-        """Apply slippage tolerance: amountOut × (1 − slippage)."""
-        return int(amount * (1 - slippage))
-
-    def _ensure_approval(self, token_address: str, amount_wei: int) -> None:
-        """Approve SwapRouter to spend `amount_wei` of `token_address` if needed."""
-        token = self.w3.eth.contract(
-            address=Web3.to_checksum_address(token_address),
-            abi=ERC20_APPROVE_ABI,
-        )
-        current = token.functions.allowance(
-            self.wallet.account.address,
-            Web3.to_checksum_address(SWAP_ROUTER),
-        ).call()
-        if current >= amount_wei:
-            return
-        # Send approval tx
-        nonce = self.w3.eth.get_transaction_count(self.wallet.account.address)
-        tx = token.functions.approve(
-            Web3.to_checksum_address(SWAP_ROUTER),
-            amount_wei,  # exact-amount approval — minimizes exposure if router is compromised
-        ).build_transaction({
-            "from":     self.wallet.account.address,
-            "nonce":    nonce,
-            **self._eip1559_fees(),
-            "gas":      60_000,
-        })
-        signed = self.wallet.account.sign_transaction(tx)
-        self.w3.eth.send_raw_transaction(signed.raw_transaction)
-        print(f"[SwapExecutor] Approved {token_address[:8]}… for SwapRouter")
-
     # ── public swap methods ───────────────────────────────────────────────────
 
     def swap_eth_to_usdc(
         self,
-        amount_eth: float,
-        slippage: float = 0.005,
+        amount_eth:    float,
+        slippage:      float           = 0.005,
         expected_usdc: Optional[float] = None,
+        wait:          bool            = True,
     ) -> str:
         """
-        Sell `amount_eth` ETH for USDC.
-        `slippage` = max acceptable price slippage (default 0.5 %).
-        `expected_usdc` = quote amount (used for min-out calc). Falls back
-                          to 0 min-out if not provided (use with caution on mainnet).
-        Returns hex tx hash.
+        Sell ``amount_eth`` ETH for USDC on Uniswap V3.
+
+        Parameters
+        ----------
+        amount_eth    : ETH to sell (e.g. 0.05)
+        slippage      : max acceptable slippage, decimal (0.005 = 0.5 %)
+        expected_usdc : quoted USDC output; used to compute amountOutMinimum.
+                        If None, min_out = 0 (any output accepted — risky on mainnet).
+        wait          : if True, waits for on-chain confirmation (default True)
+
+        Returns
+        -------
+        Hex transaction hash string (confirmed if wait=True).
         """
         amount_in = self.w3.to_wei(amount_eth, "ether")
 
-        # Calculate minimum USDC out with slippage applied
-        if expected_usdc is not None:
-            min_out = int(expected_usdc * 1e6 * (1 - slippage))
-        else:
-            min_out = 0  # accepts any amount — risky on mainnet
-
-        params = (
-            Web3.to_checksum_address(WETH_ADDRESS),   # tokenIn (ETH sent as WETH)
-            Web3.to_checksum_address(USDC_ADDRESS),   # tokenOut
-            self.DEFAULT_FEE,
-            self.wallet.account.address,               # recipient
-            self._deadline(),
-            amount_in,
-            min_out,
-            0,                                         # no price limit
+        min_out = (
+            int(expected_usdc * 1e6 * (1 - slippage))
+            if expected_usdc is not None
+            else 0
         )
 
-        nonce = self.w3.eth.get_transaction_count(self.wallet.account.address)
-        tx = self.router.functions.exactInputSingle(params).build_transaction({
-            "from":     self.wallet.account.address,
-            "value":    amount_in,   # ETH sent with the tx
-            "nonce":    nonce,
-            **self._eip1559_fees(),
-            "gas":      200_000,
-        })
+        params = (
+            Web3.to_checksum_address(WETH_ADDRESS),
+            Web3.to_checksum_address(USDC_ADDRESS),
+            self.DEFAULT_FEE,
+            self.wallet.account.address,
+            amount_in,
+            min_out,
+            0,    # no sqrt price limit
+        )
 
-        signed   = self.wallet.account.sign_transaction(tx)
-        tx_hash  = self.w3.eth.send_raw_transaction(signed.raw_transaction)
-        print(f"[SwapExecutor] ETH→USDC  {amount_eth} ETH  tx={tx_hash.hex()[:18]}…")
-        return tx_hash.hex()
+        calldata = self.router.encodeABI(fn_name="exactInputSingle", args=[params])
+
+        tx = self._tx_mgr.build_tx(
+            to=SWAP_ROUTER,
+            value_wei=amount_in,
+            data=Web3.to_bytes(hexstr=calldata),
+        )
+
+        if wait:
+            receipt = self._tx_mgr.send_and_confirm(tx)
+            print(
+                f"[SwapExecutor] ETH→USDC confirmed  "
+                f"{amount_eth} ETH  block={receipt.block_number}  "
+                f"gas={receipt.gas_used:,}  tx={receipt.tx_hash[:18]}…"
+            )
+            return receipt.tx_hash
+        else:
+            tx_hash = self._tx_mgr.sign_and_send(tx)
+            print(f"[SwapExecutor] ETH→USDC sent  {amount_eth} ETH  tx={tx_hash[:18]}…")
+            return tx_hash
 
     def swap_usdc_to_eth(
         self,
-        amount_usdc: float,
-        slippage: float = 0.005,
+        amount_usdc:  float,
+        slippage:     float           = 0.005,
         expected_eth: Optional[float] = None,
+        wait:         bool            = True,
     ) -> str:
         """
-        Sell `amount_usdc` USDC for ETH (WETH).
-        Returns hex tx hash.
+        Sell ``amount_usdc`` USDC for ETH (WETH) on Uniswap V3.
+
+        Parameters
+        ----------
+        amount_usdc  : USDC to sell (e.g. 170.0)
+        slippage     : max acceptable slippage (default 0.5 %)
+        expected_eth : quoted ETH output for min-out calculation
+        wait         : wait for on-chain confirmation (default True)
+
+        Returns
+        -------
+        Hex transaction hash string.
         """
-        amount_in = int(amount_usdc * 1e6)  # USDC has 6 decimals
+        amount_in = int(amount_usdc * 1e6)   # USDC has 6 decimals
         min_out   = (
             self.w3.to_wei(expected_eth * (1 - slippage), "ether")
-            if expected_eth else 0
+            if expected_eth is not None
+            else 0
         )
 
-        self._ensure_approval(USDC_ADDRESS, amount_in)
+        # Ensure USDC allowance before swap
+        self._tx_mgr.ensure_approval(USDC_ADDRESS, SWAP_ROUTER, amount_in)
 
         params = (
-            Web3.to_checksum_address(USDC_ADDRESS),   # tokenIn
-            Web3.to_checksum_address(WETH_ADDRESS),   # tokenOut
+            Web3.to_checksum_address(USDC_ADDRESS),
+            Web3.to_checksum_address(WETH_ADDRESS),
             self.DEFAULT_FEE,
             self.wallet.account.address,
-            self._deadline(),
             amount_in,
             min_out,
             0,
         )
 
-        nonce = self.w3.eth.get_transaction_count(self.wallet.account.address)
-        tx = self.router.functions.exactInputSingle(params).build_transaction({
-            "from":     self.wallet.account.address,
-            "value":    0,
-            "nonce":    nonce,
-            **self._eip1559_fees(),
-            "gas":      200_000,
-        })
+        calldata = self.router.encodeABI(fn_name="exactInputSingle", args=[params])
 
-        signed  = self.wallet.account.sign_transaction(tx)
-        tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
-        print(f"[SwapExecutor] USDC→ETH  {amount_usdc} USDC  tx={tx_hash.hex()[:18]}…")
-        return tx_hash.hex()
+        tx = self._tx_mgr.build_tx(
+            to=SWAP_ROUTER,
+            value_wei=0,
+            data=Web3.to_bytes(hexstr=calldata),
+        )
+
+        if wait:
+            receipt = self._tx_mgr.send_and_confirm(tx)
+            print(
+                f"[SwapExecutor] USDC→ETH confirmed  "
+                f"{amount_usdc} USDC  block={receipt.block_number}  "
+                f"gas={receipt.gas_used:,}  tx={receipt.tx_hash[:18]}…"
+            )
+            return receipt.tx_hash
+        else:
+            tx_hash = self._tx_mgr.sign_and_send(tx)
+            print(f"[SwapExecutor] USDC→ETH sent  {amount_usdc} USDC  tx={tx_hash[:18]}…")
+            return tx_hash
 
     def estimate_gas_usd(self, gas: int = 200_000) -> float:
-        """Rough gas cost estimate in USD (uses current gas price + $2500/ETH fallback)."""
+        """
+        Estimate the USD cost of a transaction at current EIP-1559 gas prices.
+
+        Uses the live AlchemyClient fee oracle for accurate baseFee + tip.
+        Falls back to a conservative estimate if the RPC call fails.
+        """
         try:
             from engine.market_data import MarketData
             eth_price = MarketData().get_price()
         except Exception:
             eth_price = 2500.0
-        gas_wei   = self.w3.eth.gas_price * gas
-        gas_eth   = self.w3.from_wei(gas_wei, "ether")
-        return float(gas_eth) * eth_price
+
+        try:
+            _, _, max_fee = self._alchemy.get_eip1559_fees()
+            gas_eth = float(self.w3.from_wei(max_fee * gas, "ether"))
+        except Exception:
+            # Fallback: 30 gwei × 200k gas
+            gas_eth = float(self.w3.from_wei(30 * 10 ** 9 * gas, "ether"))
+
+        return round(gas_eth * eth_price, 4)

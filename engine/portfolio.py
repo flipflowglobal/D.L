@@ -80,9 +80,9 @@ class Portfolio:
     def _last_price(self) -> float:
         """Best-effort last known ETH price from trade history."""
         for t in reversed(self.trades):
-            if t.get("price_usd"):
+            if t.get("price_usd") and t["price_usd"] > 0:
                 return t["price_usd"]
-        return 0.0
+        return 1.0  # non-zero: avoids wiping ETH value before first trade is recorded
 
     def save_trade_log(self, path: Optional[str] = None) -> None:
         target = path or TRADE_LOG_FILE

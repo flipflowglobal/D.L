@@ -18,6 +18,8 @@ class MeanReversionStrategy:
             return "HOLD"
 
         mean = sum(self.prices) / len(self.prices)
+        if mean <= 0:
+            return "HOLD"
         deviation = (price - mean) / mean
 
         if deviation < -self.threshold:
