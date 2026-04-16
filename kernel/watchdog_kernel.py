@@ -113,7 +113,14 @@ class WatchdogKernel:
                     logger.error(
                         "Integrity check FAILED: %s", result.get("failures")
                     )
-                    # Continue but log — don't block boot on missing binaries
+                    # In strict mode, abort startup on integrity failure
+                    strict = os.getenv("KERNEL_INTEGRITY_STRICT", "false").lower() in (
+                        "1", "true", "yes",
+                    )
+                    if strict:
+                        logger.critical("Strict integrity mode — aborting startup")
+                        self._running = False
+                        return
                 else:
                     logger.info(
                         "Integrity check passed: %d files verified",
@@ -368,7 +375,9 @@ def _setup_signals(kernel: WatchdogKernel, loop: asyncio.AbstractEventLoop) -> N
     """Register SIGTERM / SIGINT handlers for graceful shutdown."""
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(kernel.shutdown()))
+            loop.add_signal_handler(
+                sig, lambda _s=sig: asyncio.create_task(kernel.shutdown())
+            )
         except NotImplementedError:
             pass  # Windows — signal handlers are not supported
 

@@ -71,16 +71,13 @@ done
 
 # ── Python environment ────────────────────────────────────────────────────────
 activate_venv() {
-    if [ -f "${SCRIPT_DIR}/venv/bin/activate" ]; then
+    local venv_path="${VENV_PATH:-${SCRIPT_DIR}/venv}"
+    if [ -f "${venv_path}/bin/activate" ]; then
         # shellcheck disable=SC1091
-        source "${SCRIPT_DIR}/venv/bin/activate"
-        log_info "Virtual environment activated"
-    elif [ -f "$HOME/OnTheDL/venv/bin/activate" ]; then
-        # shellcheck disable=SC1091
-        source "$HOME/OnTheDL/venv/bin/activate"
-        log_info "Virtual environment activated (home)"
+        source "${venv_path}/bin/activate"
+        log_info "Virtual environment activated (${venv_path})"
     else
-        log_warn "No virtualenv found — using system Python"
+        log_warn "No virtualenv found at ${venv_path} — using system Python"
     fi
 }
 

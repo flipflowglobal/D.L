@@ -34,7 +34,9 @@ logger = logging.getLogger("aureon.watchdog_agent")
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-# An agent is "stuck" if cycle_count hasn't changed for this many check rounds
+# An agent is "stuck" if cycle_count hasn't changed for this many consecutive
+# check rounds.  With the default KERNEL_AGENT_CHECK_INTERVAL of 15 s this
+# means ~45 s of zero progress before a forced restart.
 STUCK_THRESHOLD_ROUNDS = 3
 
 # Max consecutive errors before forced restart
