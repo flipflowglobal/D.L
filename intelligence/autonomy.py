@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
@@ -175,11 +175,11 @@ class AgentLoop:
 
         self.cycle_count = 0
         await memory.store(agent_id, "status",     "running")
-        await memory.store(agent_id, "started_at", datetime.utcnow().isoformat())
+        await memory.store(agent_id, "started_at", datetime.now(timezone.utc).isoformat())
 
         while self.running:
             self.cycle_count += 1
-            ts = datetime.utcnow().isoformat()
+            ts = datetime.now(timezone.utc).isoformat()
 
             try:
                 result = await self._run_cycle_async(eng, agent_id)
