@@ -506,7 +506,7 @@ class TradingAgent:
         """
         # Try CoinGecko (non-blocking via executor)
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             price = await loop.run_in_executor(None, self._fetch_coingecko)
             if price:
                 return price
