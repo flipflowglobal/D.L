@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Darcel King. All rights reserved.
-# SPDX-License-Identifier: BUSL-1.1
+# SPDX-License-Identifier: LicenseRef-Proprietary
 """
 AUREON Trading Bot — main entry point
 ──────────────────────────────────────

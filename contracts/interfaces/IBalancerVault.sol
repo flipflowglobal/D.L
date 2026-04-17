@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 pragma solidity ^0.8.20;
 
 interface IBalancerVault {

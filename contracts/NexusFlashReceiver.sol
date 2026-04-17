@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: LicenseRef-Proprietary
 // Copyright (c) 2026 Darcel King. All rights reserved.
-// Business Source License 1.1 — see LICENSE in repository root.
+// Proprietary — see LICENSE in repository root.
 pragma solidity ^0.8.20;
 
 /**
