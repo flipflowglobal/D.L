@@ -26,7 +26,7 @@ jobs:
         run: |
           python -m pyflakes \
             engine/ intelligence/ vault/ tests/ \
-            kernel/ agents/ core/ \
+            kernel/ agents/ core/ nexus_arb/ \
             main.py tools.py database.py setup_wallet.py trade.py config.py \
             aureon_server.py aureon_onthedl.py blockchain_aureon.py \
             DL_SYSTEM/core/ DL_SYSTEM/agents/
