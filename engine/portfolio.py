@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 TRADE_LOG_FILE = os.path.join(
@@ -55,7 +55,7 @@ class Portfolio:
                 self.sell(price, amount)
 
         self.trades.append({
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "side":      side,
             "price_usd": round(price, 4),
             "amount_eth": round(amount, 6),
@@ -88,7 +88,7 @@ class Portfolio:
         target = path or TRADE_LOG_FILE
         os.makedirs(os.path.dirname(target), exist_ok=True)
         payload = {
-            "saved_at":    datetime.utcnow().isoformat(),
+            "saved_at":    datetime.now(timezone.utc).isoformat(),
             "initial_usd": self.initial_usd,
             "summary":     self.summary(),
             "trades":      self.trades,

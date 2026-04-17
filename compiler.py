@@ -5,7 +5,7 @@ AUREON Contract Compiler & Deployer
 Compiles Solidity and deploys via web3.  Works on all platforms:
 
   Compilation priority chain (matches system resilient architecture):
-    1. py-solc-x native binary  — fastest, works on Linux x86_64/macOS
+    1. py-solc-x (ARM64-aware)  — fastest, works on all platforms incl. Termux/ARM64
     2. ARM solc-bin download    — for Termux / Android aarch64
     3. Remix online API         — no binary needed, any platform
     4. Verified embedded bytecode — offline fallback, always works
@@ -293,10 +293,41 @@ def compile_contract(name: str, cfg: dict, chain_id: int = 11155111) -> dict:
 def _try_solcx(name: str, source: str, version: str, runs: int) -> Optional[dict]:
     try:
         import solcx
+        import stat
+
         installed = [str(v) for v in solcx.get_installed_solc_versions()]
         if version not in installed:
-            log.info("[COMPILE] Installing solc %s …", version)
-            solcx.install_solc(version)
+            arch = platform.machine().lower()
+            if arch in ("aarch64", "arm64"):
+                _SOLC_ARM64_COMMITS = {
+                    "0.8.20": "bf5f35e1",
+                    "0.8.19": "7dd6d404",
+                    "0.8.18": "87f40d1a",
+                    "0.8.17": "8df45f84",
+                }
+                commit = _SOLC_ARM64_COMMITS.get(version, "bf5f35e1")
+                install_dir = Path(solcx.get_solcx_install_folder())
+                install_dir.mkdir(parents=True, exist_ok=True)
+                solc_path = install_dir / f"solc-v{version}"
+                log.info("[COMPILE] ARM64 detected — injecting solc binary into solcx …")
+                if not solc_path.exists():
+                    url = (
+                        "https://github.com/ethereum/solc-bin/raw/gh-pages/"
+                        f"linux-aarch64/solc-linux-aarch64-v{version}+commit.{commit}"
+                    )
+                    log.info("[COMPILE] Downloading ARM64 solc %s → %s …", version, solc_path)
+                    try:
+                        resp = requests.get(url, timeout=30)
+                        resp.raise_for_status()
+                        solc_path.write_bytes(resp.content)
+                        solc_path.chmod(solc_path.stat().st_mode | stat.S_IEXEC)
+                    except Exception as exc:
+                        log.debug("[COMPILE] ARM64 solc injection failed: %s", exc)
+                        return None
+                log.info("[COMPILE] ARM64 solc binary ready at %s", solc_path)
+            else:
+                log.info("[COMPILE] Installing solc %s …", version)
+                solcx.install_solc(version)
         solcx.set_solc_version(version)
         out = solcx.compile_source(
             source,
@@ -312,6 +343,7 @@ def _try_solcx(name: str, source: str, version: str, runs: int) -> Optional[dict
                     return None
                 log.info("[COMPILE] solcx: %d ABI entries, %d bytes bytecode",
                          len(v["abi"]), len(bytecode) // 2)
+                log.info("[COMPILE] Layer 1 (py-solc-x ARM64) succeeded")
                 return {"abi": v["abi"], "bytecode": bytecode}
     except ImportError:
         log.debug("[COMPILE] py-solc-x not installed")
@@ -519,7 +551,7 @@ def _banner(w3: Web3, account):
     print(f"║  Balance:  {float(balance):<38.6f}║")
     print(f"║  Profit →  {(PROFIT_WALLET or 'NOT SET')[:40]:<40}║"[:52] + "║")
     print("╠══════════════════════════════════════════════════╣")
-    print("║  Compile: solcx → arm-solc → Remix API → embed  ║")
+    print("║  Compile: solcx(ARM64) → arm-solc → Remix → embed ║")
     print("╚══════════════════════════════════════════════════╝")
     print()
 
