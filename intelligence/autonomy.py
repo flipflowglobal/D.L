@@ -186,7 +186,7 @@ class AgentLoop:
                 result = await self._run_cycle_async(eng, agent_id)
             except Exception as exc:
                 result = {"status": "error", "error": str(exc)}
-                print(f"[AUREON] Cycle error: {exc}")
+                logger.error("Cycle %d error: %s", self.cycle_count, exc)
 
             # Persist state (3 concurrent SQLite writes)
             await asyncio.gather(

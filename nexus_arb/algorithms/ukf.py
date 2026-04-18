@@ -50,6 +50,8 @@ from typing import Optional
 import math
 import numpy as np
 
+import math
+
 
 @dataclass
 class UKFState:
@@ -173,6 +175,8 @@ class UnscentedKalmanFilter:
         -------
         UKFState with posterior mean, covariance, innovation, anomaly flag
         """
+        if z <= 0:
+            raise ValueError(f"Price observation must be positive, got {z}")
         if self._x is None:
             # Auto-initialize on first observation
             self.initialize(z)
@@ -246,6 +250,4 @@ class UnscentedKalmanFilter:
     def covariance(self) -> Optional[np.ndarray]:
         """Current state covariance, or None if not initialized."""
         return self._P.copy() if self._P is not None else None
-
-
 

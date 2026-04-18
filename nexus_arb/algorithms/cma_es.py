@@ -192,7 +192,8 @@ class CMAES:
             invsqrtC = B @ np.diag(1.0 / D) @ B.T
             ps = (1 - self._cs) * ps + math.sqrt(self._cs * (2 - self._cs) * self._mu_eff) * invsqrtC @ y_w
             hs = (np.dot(ps, ps) / self.n / (1 - (1 - self._cs) ** (2 * n_evals / self._lam))) < (2 + 4 / (self.n + 1))
-            sigma *= math.exp((self._cs / self._damps) * (np.linalg.norm(ps) / self._chi_n - 1))
+            exp_arg = (self._cs / self._damps) * (np.linalg.norm(ps) / self._chi_n - 1)
+            sigma *= math.exp(np.clip(exp_arg, -100.0, 100.0))
 
             # ── Covariance update ─────────────────────────────────────────────
             pc = (1 - self._cc) * pc + hs * math.sqrt(self._cc * (2 - self._cc) * self._mu_eff) * y_w

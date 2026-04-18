@@ -209,14 +209,14 @@ class ArbitrageScanner:
         Given a {dex_name: price} dict, find the best spread and return
         an opportunity list if it exceeds the threshold.
         """
-        if not prices:
+        if len(prices) < 2:
             return None
 
         min_dex = min(prices, key=prices.get)
         max_dex = max(prices, key=prices.get)
         low     = prices[min_dex]
         high    = prices[max_dex]
-        if low <= 0:
+        if low <= 0 or min_dex == max_dex:
             return None
         spread  = (high - low) / low
 
