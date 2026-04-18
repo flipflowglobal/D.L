@@ -330,7 +330,7 @@ class TestNexusSolidityEngineCompile:
 
             self.engine.compile(spec, chain_id=CHAIN_SEPOLIA)
 
-        abi_path = Path(self._tmpdir) / "FlashLoanArbitrage.abi.json"
+        abi_path = Path(self._tmpdir) / f"FlashLoanArbitrage_{CHAIN_SEPOLIA}.abi.json"
         assert abi_path.exists()
         loaded = json.loads(abi_path.read_text())
         assert loaded == fake_abi
@@ -350,7 +350,7 @@ class TestNexusSolidityEngineCompile:
 
             self.engine.compile(spec, chain_id=CHAIN_SEPOLIA)
 
-        bin_path = Path(self._tmpdir) / "FlashLoanArbitrage.bin"
+        bin_path = Path(self._tmpdir) / f"FlashLoanArbitrage_{CHAIN_SEPOLIA}.bin"
         assert bin_path.exists()
         assert bin_path.read_text() == fake_bc
 
@@ -830,3 +830,54 @@ class TestNexusSolidityEngineDeploy:
         addr_file = Path(self._tmpdir) / "FlashLoanArbitrage.address.txt"
         assert addr_file.exists()
         assert addr_file.read_text() == deployed_addr
+
+    def test_deploy_uses_alchemy_client_fee_oracle(self):
+        """When an AlchemyClient is passed, deploy() uses its fee oracle and nonce."""
+        from engine.compiler.contract_registry import get
+        spec   = get("FlashLoanArbitrage")
+        result = self._make_result(chain_id=CHAIN_SEPOLIA)
+
+        deployed_addr = "0xBEEF000000000000000000000000000000005678"
+
+        # --- mock AlchemyClient ---
+        mock_client             = MagicMock()
+        mock_client.w3.eth.chain_id = CHAIN_SEPOLIA
+        mock_client.w3.eth.account.from_key.return_value = MagicMock(address=DUMMY_ADDR)
+        mock_client.get_nonce.return_value = 3
+        # fee oracle returns (base_fee, priority_fee, max_fee)
+        mock_client.get_eip1559_fees.return_value = (int(10e9), int(2e9), int(22e9))
+        mock_client.w3.from_wei.return_value = 0.001
+
+        mock_constructor_fn = MagicMock()
+        mock_constructor_fn.estimate_gas.return_value = 2_500_000
+        mock_constructor_fn.build_transaction.return_value = {
+            "from": DUMMY_ADDR, "nonce": 3, "gas": 3_000_000,
+            "maxFeePerGas": int(22e9), "chainId": CHAIN_SEPOLIA, "data": b"",
+        }
+        mock_contract_cls = MagicMock()
+        mock_contract_cls.constructor.return_value = mock_constructor_fn
+        mock_client.w3.eth.contract.return_value   = mock_contract_cls
+
+        signed_tx = MagicMock(raw_transaction=b"\x02" * 300)
+        mock_client.w3.eth.account.from_key.return_value.sign_transaction.return_value = signed_tx
+
+        receipt = MagicMock(
+            contractAddress=deployed_addr,
+            status=1,
+            gasUsed=2_100_000,
+        )
+        mock_client.w3.eth.send_raw_transaction.return_value = b"\xca\xfe"
+        mock_client.w3.eth.wait_for_transaction_receipt.return_value = receipt
+
+        addr = self.engine.deploy(
+            spec, result,
+            rpc_url="http://rpc",
+            private_key=DUMMY_KEY,
+            client=mock_client,
+        )
+
+        # AlchemyClient fee oracle was used
+        mock_client.get_eip1559_fees.assert_called_once()
+        # AlchemyClient nonce tracker was used
+        mock_client.get_nonce.assert_called_once_with(DUMMY_ADDR, pending=True)
+        assert addr == deployed_addr

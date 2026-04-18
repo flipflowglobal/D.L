@@ -8,7 +8,8 @@ contracts.  Designed to outperform browser-based tools (Remix, etc.) through:
   • Compile cache           — hash-based; recompiles only when source changes
   • Bytecode integrity      — keccak256 stored alongside every artifact
   • Multi-network support   — mainnet / Sepolia / Arbitrum / Base / Polygon
-  • EIP-1559 deployment     — uses AUREON AlchemyClient + TransactionManager
+  • EIP-1559 deployment     — uses AUREON AlchemyClient for fee oracle when
+                             provided; falls back to raw Web3 fee_history otherwise
   • One-shot pipeline       — compile → verify → deploy → update .env
 
 Resilience layers (same pattern as ResilientPriceEngine / compiler.py):
@@ -21,14 +22,20 @@ Usage
 -----
 from engine.compiler.solidity_engine import NexusSolidityEngine
 from engine.compiler import contract_registry
+from engine.mainnet.alchemy_client import AlchemyClient
 
 engine = NexusSolidityEngine()
 spec   = contract_registry.get("NexusFlashReceiver")
 result = engine.compile(spec, chain_id=11155111)
 print(result.bytecode_hex[:20], "...", result.byte_count, "bytes")
 
-address = engine.deploy(spec, result, chain_id=11155111,
-                        rpc_url=RPC_URL, private_key=PRIVATE_KEY)
+# Option A — with AlchemyClient (uses Alchemy fee oracle + nonce tracking)
+client  = AlchemyClient(RPC_URL)
+address = engine.deploy(spec, result, rpc_url=RPC_URL, private_key=PK,
+                        client=client)
+
+# Option B — plain RPC URL (falls back to Web3 fee_history)
+address = engine.deploy(spec, result, rpc_url=RPC_URL, private_key=PK)
 """
 
 from __future__ import annotations
@@ -48,6 +55,7 @@ import requests
 from web3 import Web3
 
 from engine.compiler.contract_registry import ContractSpec
+from engine.mainnet.alchemy_client import AlchemyClient
 
 log = logging.getLogger("aureon.nexus_compiler")
 
@@ -123,7 +131,7 @@ class NexusSolidityEngine:
       - Compile cache skips redundant recompilation
       - Multi-network address injection from ContractRegistry
       - Bytecode integrity via keccak256 stored in JSON manifest
-      - EIP-1559 deployment using AlchemyClient + TransactionManager
+      - EIP-1559 deployment using AlchemyClient fee oracle when provided
       - Single Python API for compile, verify, deploy, save
     """
 
@@ -156,7 +164,11 @@ class NexusSolidityEngine:
         source_hash = _keccak256(source.encode())
 
         if not force:
-            cached = self._load_cache(spec.name, chain_id, source_hash)
+            cached = self._load_cache(
+                spec.name, chain_id, source_hash,
+                solc_version=spec.solc_version,
+                optimize_runs=spec.optimize_runs,
+            )
             if cached:
                 log.info(
                     "[NEXUS] Cache hit: %s (chain=%d, %d bytes)",
@@ -218,28 +230,43 @@ class NexusSolidityEngine:
         rpc_url: str,
         private_key: str,
         gas_buffer: float = 1.20,
+        client: Optional[AlchemyClient] = None,
     ) -> str:
         """
         Deploy a compiled contract and return the deployed address.
 
-        Uses EIP-1559 if the network supports it (detected automatically).
-        Updates build/solidity/<name>.address.txt and .env.
+        When ``client`` (an :class:`~engine.mainnet.alchemy_client.AlchemyClient`)
+        is provided, its ``get_eip1559_fees()`` oracle and ``get_nonce()`` are used
+        for accurate EIP-1559 fee estimation and pending-nonce tracking — the same
+        fee-oracle layer used by the rest of the AUREON engine.
+
+        When ``client`` is omitted, the method falls back to querying
+        ``eth_feeHistory`` directly via raw Web3, which works on any HTTPS
+        RPC endpoint but does not benefit from Alchemy's enhanced priority-fee
+        oracle.
+
+        Updates ``build/solidity/<name>.address.txt`` and ``.env`` on success.
 
         Parameters
         ----------
         spec        : ContractSpec (for constructor args)
         result      : CompileResult from compile()
-        rpc_url     : HTTPS or WSS RPC endpoint
+        rpc_url     : HTTPS RPC endpoint (Alchemy, Infura, or any node)
         private_key : deployer private key (hex, with or without 0x)
-        gas_buffer  : multiply estimated gas by this factor
+        gas_buffer  : multiply estimated gas by this factor (default 1.20)
+        client      : optional AlchemyClient; when provided, uses its
+                      EIP-1559 fee oracle and nonce tracker
 
         Returns
         -------
         Deployed contract address (checksum).
         """
-        w3      = Web3(Web3.HTTPProvider(rpc_url))
-        if not w3.is_connected():
-            raise ConnectionError(f"Cannot connect to RPC: {rpc_url}")
+        if client is not None:
+            w3 = client.w3
+        else:
+            w3 = Web3(Web3.HTTPProvider(rpc_url))
+            if not w3.is_connected():
+                raise ConnectionError(f"Cannot connect to RPC: {rpc_url}")
 
         chain_id = w3.eth.chain_id
         if chain_id != result.chain_id:
@@ -251,9 +278,14 @@ class NexusSolidityEngine:
         account = w3.eth.account.from_key(private_key)
         log.info("[NEXUS] Deploying %s to chain %d …", spec.name, chain_id)
 
-        contract     = w3.eth.contract(abi=result.abi, bytecode=result.bytecode_hex)
-        constructor  = spec.constructor_args(chain_id)
-        nonce        = w3.eth.get_transaction_count(account.address)
+        contract    = w3.eth.contract(abi=result.abi, bytecode=result.bytecode_hex)
+        constructor = spec.constructor_args(chain_id)
+
+        # Nonce: use AlchemyClient's pending-aware tracker when available
+        if client is not None:
+            nonce = client.get_nonce(account.address, pending=True)
+        else:
+            nonce = w3.eth.get_transaction_count(account.address)
 
         # Estimate gas
         gas_estimate = contract.constructor(*constructor).estimate_gas(
@@ -262,21 +294,26 @@ class NexusSolidityEngine:
         gas_limit = int(gas_estimate * gas_buffer)
         log.info("[NEXUS] Gas estimate: %d → limit: %d", gas_estimate, gas_limit)
 
-        # Build deploy transaction (EIP-1559 where supported)
+        # EIP-1559 fees: prefer AlchemyClient oracle, fall back to fee_history
         base_tx: dict[str, Any] = {
             "from":    account.address,
             "nonce":   nonce,
             "gas":     gas_limit,
             "chainId": chain_id,
         }
-        try:
-            fee_history = w3.eth.fee_history(1, "latest", [50])
-            base_fee    = fee_history["baseFeePerGas"][-1]
-            priority    = w3.to_wei(1.5, "gwei")
-            base_tx["maxFeePerGas"]         = base_fee * 2 + priority
-            base_tx["maxPriorityFeePerGas"] = priority
-        except Exception:
-            base_tx["gasPrice"] = w3.eth.gas_price
+        if client is not None:
+            _, priority_fee, max_fee = client.get_eip1559_fees()
+            base_tx["maxPriorityFeePerGas"] = priority_fee
+            base_tx["maxFeePerGas"]         = max_fee
+        else:
+            try:
+                fee_history = w3.eth.fee_history(1, "latest", [50])
+                base_fee    = fee_history["baseFeePerGas"][-1]
+                priority    = w3.to_wei(1.5, "gwei")
+                base_tx["maxFeePerGas"]         = base_fee * 2 + priority
+                base_tx["maxPriorityFeePerGas"] = priority
+            except Exception:
+                base_tx["gasPrice"] = w3.eth.gas_price
 
         deploy_tx = contract.constructor(*constructor).build_transaction(base_tx)
         signed    = account.sign_transaction(deploy_tx)
