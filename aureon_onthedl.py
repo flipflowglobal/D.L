@@ -1,4 +1,14 @@
+"""
+aureon_onthedl.py — Multi-chain OnTheDL agent server.
+
+Manages Ethereum, BSC, and optionally Solana wallets through a FastAPI
+interface with background worker tasks for monitoring and blockchain queries.
+"""
+
+from __future__ import annotations
+
 import asyncio
+import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -6,6 +16,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any
 from enum import Enum
+
+logger = logging.getLogger("aureon.onthedl")
 
 from dotenv import load_dotenv
 
@@ -85,7 +97,7 @@ class Orchestrator:
     async def execute_task(self, task: TaskRequest):
         agent = self.agents.get(task.agent_id)
         if not agent:
-            print("Agent not found:", task.agent_id)
+            logger.warning("Agent not found: %s", task.agent_id)
             return
 
         agent.status = AgentStatus.RUNNING
@@ -102,9 +114,9 @@ class Orchestrator:
                 result = analyze_text(task.payload.get("text", ""))
             else:
                 result = {"status": "unknown"}
-            print("TASK RESULT:", result)
-        except Exception as e:
-            print("ERROR:", e)
+            logger.info("Task result: %s", result)
+        except Exception as exc:
+            logger.error("Task error: %s", exc)
         agent.status = AgentStatus.IDLE
 
 # ---------------- SYSTEM FUNCTIONS ----------------
