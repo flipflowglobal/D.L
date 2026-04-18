@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import time
 from datetime import datetime, timezone
@@ -525,7 +526,7 @@ class FlashLoanTerminal:
 
 def _mask(url: str) -> str:
     """Mask API keys in URLs for display."""
-    if "alchemy.com" in url and "/v2/" in url:
+    if re.search(r"https?://[^/]*\.alchemy\.com/v2/", url, re.IGNORECASE):
         parts = url.split("/v2/")
         key = parts[1] if len(parts) > 1 else ""
         if len(key) > 8:
