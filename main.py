@@ -18,8 +18,8 @@ from typing import Any, Dict, Optional
 # ── uvloop: 2-4x faster event loop (Linux/macOS only) ─────────────────────────
 try:
     import uvloop
-    uvloop.install()
-except ImportError:
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+except (ImportError, AttributeError):
     pass  # uvloop not available (Windows / Android) — falls back to asyncio
 
 from fastapi import FastAPI, HTTPException
@@ -38,6 +38,9 @@ from intelligence.trading_agent import (
 
 logger = logging.getLogger("aureon.main")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
+# ── Module-level task tracking ────────────────────────────────────────────────
+_agent_task: asyncio.Task | None = None
 
 
 # --------------------------------------------------
@@ -69,10 +72,16 @@ async def lifespan(app: FastAPI):
     logger.info("Cognitive system online")
     logger.info("Multi-agent registry ready")
     yield
-    # Graceful shutdown: signal the agent loop to stop
+    # Graceful shutdown: signal the agent loop to stop and await it
     if loop.running:
         loop.running = False
         logger.info("Agent loop signalled to stop on shutdown")
+    if _agent_task and not _agent_task.done():
+        try:
+            await asyncio.wait_for(_agent_task, timeout=10)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            _agent_task.cancel()
+            logger.warning("Agent task cancelled during shutdown")
 
 
 # ── Application ────────────────────────────────────────────────────────────────
@@ -132,6 +141,8 @@ async def start_aureon_agent(agent_id: str) -> JSONResponse:
 
     Returns 409 if the loop is already running.
     """
+    global _agent_task
+
     if not agent_id or not agent_id.strip():
         raise HTTPException(status_code=422, detail="agent_id must be a non-empty string")
 
@@ -142,7 +153,7 @@ async def start_aureon_agent(agent_id: str) -> JSONResponse:
         )
 
     loop.running = True
-    asyncio.create_task(loop.run(agent_id))
+    _agent_task = asyncio.create_task(loop.run(agent_id))
     logger.info("Agent loop started for agent_id=%s", agent_id)
 
     return JSONResponse(

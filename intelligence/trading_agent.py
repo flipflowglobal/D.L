@@ -630,13 +630,13 @@ class AgentRegistry:
     async def start(self, agent_id: str) -> TradingAgent:
         async with self._lock:
             agent = self._get_or_raise(agent_id)
-        await agent.start()
+            await agent.start()
         return agent
 
     async def stop(self, agent_id: str) -> TradingAgent:
         async with self._lock:
             agent = self._get_or_raise(agent_id)
-        await agent.stop()
+            await agent.stop()
         return agent
 
     def get(self, agent_id: str) -> Optional[TradingAgent]:

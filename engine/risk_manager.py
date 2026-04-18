@@ -43,7 +43,8 @@ class RiskManager:
     @staticmethod
     def _today() -> int:
         """Return today's UTC date as an integer YYYYMMDD."""
-        return int(datetime.now(timezone.utc).strftime("%Y%m%d"))
+        now = datetime.now(timezone.utc)
+        return now.year * 10000 + now.month * 100 + now.day
 
     def _maybe_reset(self) -> None:
         """Auto-reset counter when the UTC calendar day rolls over."""
