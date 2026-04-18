@@ -31,7 +31,9 @@ Strategy → Algorithm mapping
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -262,8 +264,53 @@ class TradingAgent:
             try:
                 await self._task
             except asyncio.CancelledError:
+                # task cancelled cleanly
                 pass
         logger.info("Agent %s stopped after %d cycles", self.id, self.cycle_count)
+
+    async def reset(self) -> None:
+        """Stop agent, reset all metrics, and return to IDLE status."""
+        await self.stop()
+        self._capital      = self.config.initial_capital
+        self._position_eth = 0.0
+        self._peak_capital = self.config.initial_capital
+        self._prev_price   = 0.0
+        self.cycle_count   = 0
+        self.trades_made   = 0
+        self.total_pnl     = 0.0
+        self.errors        = 0
+        self._last_result  = {}
+        self.status        = AgentStatus.IDLE
+        logger.info("Agent %s reset to initial state", self.id)
+
+    def snapshot(self) -> Dict[str, Any]:
+        """Capture serialisable state for persistence."""
+        return {
+            "id":            self.id,
+            "config": {
+                "name":            self.config.name,
+                "strategy":        self.config.strategy.value,
+                "chain":           self.config.chain.value,
+                "token":           self.config.token.value,
+                "initial_capital": self.config.initial_capital,
+                "trade_size_eth":  self.config.trade_size_eth,
+                "min_profit_usd":  self.config.min_profit_usd,
+                "scan_interval":   self.config.scan_interval,
+                "dry_run":         self.config.dry_run,
+                "private_key":     self.config.private_key or self.wallet["private_key"],
+                "rpc_url":         self.config.rpc_url,
+            },
+            "wallet":         self.wallet,
+            "capital":        self._capital,
+            "position_eth":   self._position_eth,
+            "peak_capital":   self._peak_capital,
+            "prev_price":     self._prev_price,
+            "cycle_count":    self.cycle_count,
+            "trades_made":    self.trades_made,
+            "total_pnl":      self.total_pnl,
+            "errors":         self.errors,
+            "status":         self.status.value,
+        }
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
@@ -653,6 +700,54 @@ class AgentRegistry:
         if not agent:
             raise KeyError(f"Agent {agent_id!r} not found")
         return agent
+
+    def save_registry(self, path: str) -> None:
+        """Persist all agent snapshots to a JSON file."""
+        snapshots = [a.snapshot() for a in self._agents.values()]
+        dir_name = os.path.dirname(os.path.abspath(path))
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(snapshots, f, indent=2)
+        logger.info("Registry saved %d agents to %s", len(snapshots), path)
+
+    def load_registry(self, path: str) -> int:
+        """Restore agents from a saved snapshot file. Returns count loaded."""
+        if not os.path.exists(path):
+            return 0
+        with open(path) as f:
+            snapshots = json.load(f)
+        loaded = 0
+        for snap in snapshots:
+            try:
+                cfg = TradingAgentConfig(
+                    name            = snap["config"]["name"],
+                    strategy        = Strategy(snap["config"]["strategy"]),
+                    chain           = Chain(snap["config"]["chain"]),
+                    token           = Token(snap["config"]["token"]),
+                    initial_capital = snap["config"]["initial_capital"],
+                    trade_size_eth  = snap["config"]["trade_size_eth"],
+                    min_profit_usd  = snap["config"]["min_profit_usd"],
+                    scan_interval   = snap["config"]["scan_interval"],
+                    dry_run         = snap["config"]["dry_run"],
+                    private_key     = snap["config"].get("private_key"),
+                    rpc_url         = snap["config"].get("rpc_url"),
+                )
+                agent = self.create(cfg)
+                # Restore metrics
+                agent._capital        = snap.get("capital",      cfg.initial_capital)
+                agent._position_eth   = snap.get("position_eth", 0.0)
+                agent._peak_capital   = snap.get("peak_capital", cfg.initial_capital)
+                agent._prev_price     = snap.get("prev_price",   0.0)
+                agent.cycle_count     = snap.get("cycle_count",  0)
+                agent.trades_made     = snap.get("trades_made",  0)
+                agent.total_pnl       = snap.get("total_pnl",    0.0)
+                agent.errors          = snap.get("errors",       0)
+                loaded += 1
+            except Exception as exc:
+                logger.warning("Failed to restore agent: %s", exc)
+        logger.info("Registry loaded %d / %d agents from %s", loaded, len(snapshots), path)
+        return loaded
 
 
 # ── Module-level singleton ────────────────────────────────────────────────────

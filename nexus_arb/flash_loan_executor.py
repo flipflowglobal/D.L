@@ -436,6 +436,21 @@ class FlashLoanExecutor:
                 f"cycle length - 1 ({len(cycle) - 1})"
             )
 
+    def validate_opportunity(self, opportunity) -> tuple:
+        """
+        Non-raising validation — suitable for pre-flight checks.
+
+        Returns
+        -------
+        (True, "ok")              if all checks pass
+        (False, <reason string>)  if any check fails
+        """
+        try:
+            self._validate_opportunity(opportunity)
+            return True, "ok"
+        except ValueError as exc:
+            return False, str(exc)
+
     # ── Status helpers ────────────────────────────────────────────────────────
 
     def _is_paused(self) -> bool:
