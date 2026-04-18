@@ -1,7 +1,7 @@
 """
 engine/compiler/calldata_builder.py
 =====================================
-Flash-loan calldata builder and transaction broadcaster.
+Flash-loan calldata and transaction builder utilities.
 
 Provides two builders:
 
@@ -13,10 +13,12 @@ NexusFlashCalldataBuilder
   Encodes SwapStep[] structs and calls NexusFlashReceiver.initiate(
   asset, amount, steps, minProfit).
 
-Both builders can:
-  • Estimate gas before broadcasting
-  • Build a ready-to-sign transaction dict
-  • Broadcast via the AUREON TransactionManager (EIP-1559)
+These builders are responsible for:
+  • Encoding contract calldata
+  • Estimating gas where supported by the builder methods
+  • Building ready-to-sign transaction dicts
+
+Signing and broadcasting transactions are handled outside this module.
 
 Usage
 -----
