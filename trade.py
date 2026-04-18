@@ -17,6 +17,7 @@ Quick start:
 """
 
 import argparse
+import asyncio
 import json
 import os
 import signal
@@ -27,7 +28,7 @@ from datetime import datetime, timezone
 # ── uvloop: faster event loop for any async calls invoked from trade.py ───────
 try:
     import uvloop
-    uvloop.install()
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 except ImportError:
     pass
 
