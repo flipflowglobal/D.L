@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Darcel King. All rights reserved.
-# SPDX-License-Identifier: BUSL-1.1
+# SPDX-License-Identifier: LicenseRef-Proprietary
 """
 nexus_arb/flash_loan_executor.py — Python executor for NexusFlashReceiver.sol.
 
