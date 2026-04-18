@@ -222,6 +222,10 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
         require(steps.length > 0, "NFR: empty steps");
         require(steps.length <= 8, "NFR: too many steps");
 
+        // Track the contract's pre-existing balance separately so profitability
+        // is measured only on the flash-loan operation, in the borrowed asset.
+        uint256 startingAssetBalance = IERC20(asset).balanceOf(address(this)) - amount;
+
         // Execute each swap step sequentially.
         // The first step receives `amount` of `asset` as input.
         uint256 currentAmount = amount;
@@ -231,9 +235,11 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
         }
 
         // ── Profit check ──────────────────────────────────────────────────────
+        uint256 finalAssetBalance = IERC20(asset).balanceOf(address(this));
+        uint256 amountReturned = finalAssetBalance - startingAssetBalance;
         uint256 repay = amount + premium;
-        require(currentAmount >= repay, "NFR: arb not profitable");
-        uint256 profit = currentAmount - repay;
+        require(amountReturned >= repay, "NFR: arb not profitable");
+        uint256 profit = amountReturned - repay;
         require(profit >= minProfit, "NFR: profit below floor");
 
         // ── Repay Aave ────────────────────────────────────────────────────────
