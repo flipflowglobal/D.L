@@ -33,10 +33,8 @@ address = engine.deploy(spec, result, chain_id=11155111,
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import os
 import platform
 import stat
 import subprocess
@@ -49,7 +47,6 @@ from typing import Any, Optional
 import requests
 from web3 import Web3
 
-from engine.compiler import contract_registry
 from engine.compiler.contract_registry import ContractSpec
 
 log = logging.getLogger("aureon.nexus_compiler")
