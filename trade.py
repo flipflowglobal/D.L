@@ -19,6 +19,7 @@ Quick start:
 import argparse
 import asyncio
 import json
+import logging
 import os
 import signal
 import sys
@@ -35,6 +36,8 @@ except ImportError:
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger("aureon.trade")
 
 # ── runtime config ────────────────────────────────────────────────────────────
 

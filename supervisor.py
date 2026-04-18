@@ -281,7 +281,8 @@ class Supervisor:
             sidecar.healthy = (resp.status_code == 200)
             if sidecar.healthy and not was_healthy:
                 sidecar.reset_restarts()
-        except Exception:
+        except Exception as exc:
+            logger.debug("Health check failed for %s: %s", sidecar.name, exc)
             sidecar.healthy = False
 
     # ── Convenience: proxy DEX price fetch ───────────────────────────────────
@@ -297,11 +298,12 @@ class Supervisor:
             resp = await self._client.get(f"{DEX_URL}/prices")
             if resp.status_code == 200:
                 return resp.json()
-        except Exception:
+        except Exception as exc:
+            logger.debug("dex-oracle price fetch failed: %s", exc)
             self._dex.healthy = False
         return None
 
-    # ── Convenience: proxy TX send ────────────────────────────────────────────
+    # ── Convenience: proxy TX send ────────────────────────────────────────
 
     async def send_eth(self, to: str, value_eth: float, data: str = "") -> Optional[dict]:
         """
@@ -317,7 +319,8 @@ class Supervisor:
             resp = await self._client.post(f"{TX_URL}/tx/send", json=payload)
             if resp.status_code == 200:
                 return resp.json()
-        except Exception:
+        except Exception as exc:
+            logger.debug("tx-engine send_eth failed: %s", exc)
             self._tx.healthy = False
         return None
 
@@ -331,7 +334,8 @@ class Supervisor:
             })
             if resp.status_code == 200:
                 return resp.json()
-        except Exception:
+        except Exception as exc:
+            logger.debug("tx-engine contract call failed: %s", exc)
             self._tx.healthy = False
         return None
 
