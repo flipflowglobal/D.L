@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
 // ── Aave V3 ───────────────────────────────────────────────────────────────────
 
 interface IFlashLoanSimpleReceiver {
@@ -212,6 +214,8 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
         uint256 premium,
         address initiator,
         bytes calldata params
+    using SafeERC20 for IERC20;
+
     ) external override onlyPool returns (bool) {
         require(initiator == address(this), "NFR: invalid initiator");
 
@@ -243,7 +247,7 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
         require(profit >= minProfit, "NFR: profit below floor");
 
         // ── Repay Aave ────────────────────────────────────────────────────────
-        IERC20(asset).approve(aavePool, repay);
+        IERC20(asset).forceApprove(aavePool, repay);
         // Aave pulls repay from this contract; remaining profit stays here.
 
         emit FlashExecuted(asset, amount, profit, steps.length);
@@ -270,7 +274,7 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
     function _swapUniV3(SwapStep memory s, uint256 amountIn)
         internal returns (uint256 amountOut)
     {
-        IERC20(s.tokenIn).approve(s.router, amountIn);
+        IERC20(s.tokenIn).forceApprove(s.router, amountIn);
         IUniswapV3Router.ExactInputSingleParams memory p =
             IUniswapV3Router.ExactInputSingleParams({
                 tokenIn:           s.tokenIn,
@@ -288,7 +292,7 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
     function _swapV2Style(SwapStep memory s, uint256 amountIn)
         internal returns (uint256 amountOut)
     {
-        IERC20(s.tokenIn).approve(s.router, amountIn);
+        IERC20(s.tokenIn).forceApprove(s.router, amountIn);
         address[] memory path = new address[](2);
         path[0] = s.tokenIn;
         path[1] = s.tokenOut;
