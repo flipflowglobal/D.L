@@ -83,7 +83,7 @@ def execute_flash_loan(amount_wei: int, token_address: str, profit_wallet: str):
         0,     # referralCode
     ).build_transaction({
         "from": account.address,
-        "nonce": w3.eth.get_transaction_count(account.address),
+        "nonce": w3.eth.get_transaction_count(account.address, "pending"),
         "gas": 500_000,
         "gasPrice": w3.eth.gas_price,
         "chainId": w3.eth.chain_id,
