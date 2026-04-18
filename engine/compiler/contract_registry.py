@@ -310,6 +310,16 @@ _NEXUS_FLASH_RECEIVER_ABI: list[dict[str, Any]] = [
 ]
 
 
+def _network_addrs_or_raise(chain_id: int) -> dict[str, str]:
+    """Return known addresses for a supported chain_id, else raise ValueError."""
+    if chain_id not in NETWORK_ADDRESSES:
+        supported = ", ".join(str(cid) for cid in sorted(NETWORK_ADDRESSES))
+        raise ValueError(
+            f"Unsupported chain_id {chain_id}. Supported chain_ids: {supported}"
+        )
+    return NETWORK_ADDRESSES[chain_id]
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 
 REGISTRY: dict[str, ContractSpec] = {
@@ -320,7 +330,7 @@ REGISTRY: dict[str, ContractSpec] = {
         optimize_runs = 1_000_000,
         abi           = _FLASH_LOAN_ARBITRAGE_ABI,
         constructor_args_fn = lambda chain_id: [
-            NETWORK_ADDRESSES[chain_id]["aave_pool"],
+            _network_addrs_or_raise(chain_id)["aave_pool"],
             # Default minProfitWei = 0.001 ETH
             1_000_000_000_000_000,
         ],
@@ -336,7 +346,7 @@ REGISTRY: dict[str, ContractSpec] = {
         optimize_runs = 1_000_000,
         abi           = _NEXUS_FLASH_RECEIVER_ABI,
         constructor_args_fn = lambda chain_id: [
-            NETWORK_ADDRESSES[chain_id]["aave_pool"],
+            _network_addrs_or_raise(chain_id)["aave_pool"],
         ],
         description = (
             "Multi-DEX Aave V3 flash-loan receiver: up to 8 sequential "
