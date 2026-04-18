@@ -362,8 +362,8 @@ async def batch_create_agents(req: BatchCreateRequest) -> Dict[str, Any]:
                 "strategy":       agent.config.strategy.value,
                 "wallet_address": agent.wallet["address"],
             })
-        except RuntimeError as exc:
-            errors.append({"name": agent_req.name, "error": str(exc)})
+        except RuntimeError:
+            errors.append({"name": agent_req.name, "error": "Agent creation failed"})
 
     return {"created": created, "errors": errors, "count": len(created)}
 

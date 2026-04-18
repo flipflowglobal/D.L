@@ -704,18 +704,20 @@ class AgentRegistry:
     def save_registry(self, path: str) -> None:
         """Persist all agent snapshots to a JSON file."""
         snapshots = [a.snapshot() for a in self._agents.values()]
-        dir_name = os.path.dirname(os.path.abspath(path))
+        resolved = os.path.realpath(path)
+        dir_name = os.path.dirname(resolved)
         if dir_name:
             os.makedirs(dir_name, exist_ok=True)
-        with open(path, "w") as f:
+        with open(resolved, "w") as f:
             json.dump(snapshots, f, indent=2)
-        logger.info("Registry saved %d agents to %s", len(snapshots), path)
+        logger.info("Registry saved %d agents to %s", len(snapshots), resolved)
 
     def load_registry(self, path: str) -> int:
         """Restore agents from a saved snapshot file. Returns count loaded."""
-        if not os.path.exists(path):
+        resolved = os.path.realpath(path)
+        if not os.path.exists(resolved):
             return 0
-        with open(path) as f:
+        with open(resolved) as f:
             snapshots = json.load(f)
         loaded = 0
         for snap in snapshots:
