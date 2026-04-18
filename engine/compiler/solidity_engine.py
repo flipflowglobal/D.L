@@ -519,13 +519,29 @@ class NexusSolidityEngine:
 
     # ── Cache helpers ─────────────────────────────────────────────────────────
 
-    def _cache_path(self, name: str, chain_id: int) -> Path:
-        return self.build_dir / f"{name}_{chain_id}.json"
+    def _cache_path(
+        self,
+        name: str,
+        chain_id: int,
+        solc_version: Optional[str] = None,
+        optimize_runs: Optional[int] = None,
+    ) -> Path:
+        parts = [name, str(chain_id)]
+        if solc_version is not None:
+            parts.append(f"solc-{solc_version}")
+        if optimize_runs is not None:
+            parts.append(f"opt-{optimize_runs}")
+        return self.build_dir / f"{'_'.join(parts)}.json"
 
     def _load_cache(
-        self, name: str, chain_id: int, source_hash: str
+        self,
+        name: str,
+        chain_id: int,
+        source_hash: str,
+        solc_version: Optional[str] = None,
+        optimize_runs: Optional[int] = None,
     ) -> Optional[CompileResult]:
-        path = self._cache_path(name, chain_id)
+        path = self._cache_path(name, chain_id, solc_version, optimize_runs)
         if not path.exists():
             return None
         try:
@@ -533,14 +549,45 @@ class NexusSolidityEngine:
             if data.get("source_hash") != source_hash:
                 log.debug("[NEXUS] Cache stale (source changed): %s", name)
                 return None
+
+            if solc_version is not None:
+                cached_solc_version = data.get("solc_version")
+                if cached_solc_version is None:
+                    log.debug("[NEXUS] Cache stale (missing solc_version): %s", name)
+                    return None
+                if cached_solc_version != solc_version:
+                    log.debug("[NEXUS] Cache stale (solc_version changed): %s", name)
+                    return None
+
+            if optimize_runs is not None:
+                cached_optimize_runs = data.get("optimize_runs")
+                if cached_optimize_runs is None:
+                    log.debug("[NEXUS] Cache stale (missing optimize_runs): %s", name)
+                    return None
+                if cached_optimize_runs != optimize_runs:
+                    log.debug("[NEXUS] Cache stale (optimize_runs changed): %s", name)
+                    return None
+
             return CompileResult(**{k: v for k, v in data.items() if k != "byte_count"})
         except Exception as exc:
             log.debug("[NEXUS] Cache load failed: %s", exc)
             return None
 
     def _save_cache(self, result: CompileResult) -> None:
-        path = self._cache_path(result.contract_name, result.chain_id)
-        path.write_text(json.dumps(result.to_dict(), indent=2))
+        solc_version = getattr(result, "solc_version", None)
+        optimize_runs = getattr(result, "optimize_runs", None)
+        path = self._cache_path(
+            result.contract_name,
+            result.chain_id,
+            solc_version,
+            optimize_runs,
+        )
+        data = result.to_dict()
+        if solc_version is not None:
+            data["solc_version"] = solc_version
+        if optimize_runs is not None:
+            data["optimize_runs"] = optimize_runs
+        path.write_text(json.dumps(data, indent=2))
 
         # Also write human-friendly ABI and bytecode files
         (self.build_dir / f"{result.contract_name}.abi.json").write_text(
