@@ -571,7 +571,6 @@ class TestFlashLoanExecutor:
         assert profit == pytest.approx(0.05, abs=0.01)  # 5e16 wei = 0.05 ETH
 
     def test_invalid_cycle_raises(self):
-        from nexus_arb.flash_loan_executor import FlashLoanExecutor
         from nexus_arb.algorithms.bellman_ford import ArbitrageOpportunity, PoolPrice
         exc, _ = self._make_executor()
         pool = PoolPrice("A", "B", 1.0, 1.0, 30, 1.0, "uniswap_v3")

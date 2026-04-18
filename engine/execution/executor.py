@@ -1,9 +1,13 @@
 from __future__ import annotations
+
+import logging
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from vault.wallet_config import WalletConfig
     from engine.portfolio import Portfolio
+
+logger = logging.getLogger("aureon.executor")
 
 
 class Executor:

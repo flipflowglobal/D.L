@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 # ── uvloop: 2–4× faster event loop (Linux/macOS only) ────────────────────────
 try:
     import uvloop
-    uvloop.install()
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 except ImportError:
     pass  # uvloop not available (Windows / Android) — fall back to asyncio
 
