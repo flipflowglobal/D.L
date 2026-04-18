@@ -282,4 +282,4 @@ class ResilientPriceEngine:
                 from engine.price_cache import price_cache
                 self._cache = price_cache
             except Exception as exc:
-                logger.debug("price_cache unavailable: %s", exc)
+                logger.debug("Price cache init failed: %s", exc)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Darcel King. All rights reserved.
-# SPDX-License-Identifier: BUSL-1.1
+# SPDX-License-Identifier: LicenseRef-Proprietary
 """
 AUREON Trading Bot — main entry point
 ──────────────────────────────────────
@@ -17,7 +17,9 @@ Quick start:
 """
 
 import argparse
+import asyncio
 import json
+import logging
 import os
 import signal
 import sys
@@ -27,13 +29,15 @@ from datetime import datetime, timezone
 # ── uvloop: faster event loop for any async calls invoked from trade.py ───────
 try:
     import uvloop
-    uvloop.install()
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 except ImportError:
     pass  # uvloop not available — fallback to asyncio
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger("aureon.trade")
 
 # ── runtime config ────────────────────────────────────────────────────────────
 
@@ -131,7 +135,6 @@ def run(live: bool = False, flash: bool = False) -> None:
 
     if flash:
         # Flash loan mode — uses NexusFlashReceiver + Bellman-Ford
-        from web3 import Web3
         from engine.mainnet.alchemy_client import AlchemyClient
         from engine.mainnet.transaction_manager import TransactionManager
         from nexus_arb.flash_loan_executor import FlashLoanExecutor

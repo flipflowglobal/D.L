@@ -1,7 +1,10 @@
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Optional
+
+logger = logging.getLogger("aureon.portfolio")
 
 TRADE_LOG_FILE = os.path.join(
     os.path.dirname(__file__), "..", "vault", "trade_log.json"
@@ -86,12 +89,15 @@ class Portfolio:
 
     def save_trade_log(self, path: Optional[str] = None) -> None:
         target = path or TRADE_LOG_FILE
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        payload = {
-            "saved_at":    datetime.now(timezone.utc).isoformat(),
-            "initial_usd": self.initial_usd,
-            "summary":     self.summary(),
-            "trades":      self.trades,
-        }
-        with open(target, "w") as f:
-            json.dump(payload, f, indent=2)
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            payload = {
+                "saved_at":    datetime.now(timezone.utc).isoformat(),
+                "initial_usd": self.initial_usd,
+                "summary":     self.summary(),
+                "trades":      self.trades,
+            }
+            with open(target, "w") as f:
+                json.dump(payload, f, indent=2)
+        except OSError as exc:
+            logger.error("Failed to save trade log to %s: %s", target, exc)

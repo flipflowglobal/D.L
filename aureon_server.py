@@ -139,7 +139,12 @@ def file_manager(task):
     action = task.payload.get("action")
     if action == "list":
         path = task.payload.get("path", ".")
-        return [str(p) for p in Path(path).glob("*")]
+        # Restrict to project directory — prevent path traversal
+        base = Path(__file__).resolve().parent
+        target = (base / path).resolve()
+        if not str(target).startswith(str(base)):
+            return {"error": "access denied — path outside project directory"}
+        return [str(p) for p in target.glob("*")]
     return {"status": "unknown"}
 
 

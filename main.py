@@ -1,17 +1,19 @@
 # main.py
 
 import asyncio
+import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List as TypingList, Optional
 
 # ── uvloop: 2–4× faster event loop (Linux/macOS only) ────────────────────────
 try:
     import uvloop
-    uvloop.install()
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 except ImportError:
     pass  # uvloop not available (Windows / Android) — fall back to asyncio
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -24,6 +26,23 @@ from intelligence.trading_agent import (
     Token,
     registry,
 )
+
+_logger = logging.getLogger("aureon.api")
+
+# ── Module-level task tracking ────────────────────────────────────────────────
+_agent_task: asyncio.Task | None = None
+
+# ── API key authentication ────────────────────────────────────────────────────
+_API_KEY = os.getenv("AUREON_API_KEY", "")
+
+
+async def _require_api_key(request: Request):
+    """Validate X-API-Key header if AUREON_API_KEY is configured."""
+    if not _API_KEY:
+        return  # no key configured — allow all (dev mode)
+    provided = request.headers.get("X-API-Key", "")
+    if provided != _API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 # --------------------------------------------------
@@ -70,6 +89,7 @@ async def lifespan(app: FastAPI):
     print("[AUREON] Cognitive system online")
     print("[AUREON] Multi-agent registry ready")
     yield
+    await memory.close()
 
 
 # --------------------------------------------------
@@ -123,16 +143,38 @@ async def status():
 # --------------------------------------------------
 
 @app.post("/aureon/start")
-async def start_legacy_agent(agent_id: str):
-    if loop.running is False:
-        loop.running = True
-    asyncio.create_task(loop.run(agent_id))
+async def start_legacy_agent(agent_id: str, _auth=Depends(_require_api_key)):
+    global _agent_task
+
+    if loop.running:
+        return JSONResponse(content={"status": "already running", "agent_id": agent_id})
+
+    loop.running = True
+    _agent_task = asyncio.create_task(loop.run(agent_id))
+
+    def _on_done(task: asyncio.Task):
+        try:
+            exc = task.exception()
+            if exc:
+                _logger.error("Agent task failed: %s", exc)
+        except asyncio.CancelledError:
+            pass
+
+    _agent_task.add_done_callback(_on_done)
+
     return JSONResponse(content={"status": "agent started", "agent_id": agent_id})
 
 
 @app.post("/aureon/stop")
-async def stop_legacy_agent():
+async def stop_legacy_agent(_auth=Depends(_require_api_key)):
+    global _agent_task
+
     loop.running = False
+
+    if _agent_task and not _agent_task.done():
+        _agent_task.cancel()
+        _agent_task = None
+
     return JSONResponse(content={"status": "agent stopped"})
 
 
@@ -457,7 +499,7 @@ async def list_tokens() -> Dict[str, Any]:
 # --------------------------------------------------
 
 @app.get("/memory/{agent_id}/{key}")
-async def get_memory(agent_id: str, key: str):
+async def get_memory(agent_id: str, key: str, _auth=Depends(_require_api_key)):
     value = await memory.retrieve(agent_id, key)
     return {"agent_id": agent_id, "key": key, "value": value}
 

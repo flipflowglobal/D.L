@@ -56,7 +56,7 @@ from web3 import Web3
 
 from engine.mainnet.alchemy_client import AlchemyClient
 
-logger = logging.getLogger("aureon.tx_manager")
+logger = logging.getLogger("aureon.transaction_manager")
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
 
@@ -296,7 +296,7 @@ class TransactionManager:
                 if receipt is not None:
                     return self._parse_receipt(h, receipt)
             except Exception as exc:
-                logger.debug("Receipt poll error: %s", exc)
+                logger.debug("Receipt poll for %s: %s", h[:18], exc)
             time.sleep(poll_interval)
 
         raise ConfirmationTimeout(
@@ -377,7 +377,7 @@ class TransactionManager:
             except TransactionReverted:
                 raise
             except Exception as exc:
-                logger.debug("Receipt poll error: %s", exc)
+                logger.debug("Confirmation poll for %s: %s", tx_hash[:18], exc)
 
             # Bump gas if stuck
             if not bumped and time.monotonic() >= bump_at:

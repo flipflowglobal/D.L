@@ -28,6 +28,7 @@ Backwards compatibility:
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Optional
@@ -37,6 +38,8 @@ from web3 import Web3
 from vault.wallet_config import WalletConfig
 from engine.mainnet.alchemy_client      import AlchemyClient
 from engine.mainnet.transaction_manager import TransactionManager
+
+logger = logging.getLogger("aureon.swap_executor")
 
 # ── Mainnet contract addresses ────────────────────────────────────────────────
 
@@ -250,13 +253,15 @@ class SwapExecutor:
         try:
             from engine.market_data import MarketData
             eth_price = MarketData().get_price()
-        except Exception:
+        except Exception as exc:
+            logger.debug("MarketData price fetch failed, using fallback: %s", exc)
             eth_price = 2500.0
 
         try:
             _, _, max_fee = self._alchemy.get_eip1559_fees()
             gas_eth = float(self.w3.from_wei(max_fee * gas, "ether"))
-        except Exception:
+        except Exception as exc:
+            logger.debug("EIP-1559 fee oracle failed, using fallback: %s", exc)
             # Fallback: 30 gwei × 200k gas
             gas_eth = float(self.w3.from_wei(30 * 10 ** 9 * gas, "ether"))
 

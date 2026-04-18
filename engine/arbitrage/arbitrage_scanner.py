@@ -25,6 +25,8 @@ from engine.price_cache import price_cache
 
 load_dotenv()
 
+logger = logging.getLogger("aureon.arbitrage_scanner")
+
 
 class ArbitrageScanner:
     """
@@ -46,6 +48,8 @@ class ArbitrageScanner:
         rpc_url=_UNSET,
         spread_threshold: float = 0.003,    # 0.3 % minimum spread
     ):
+        if spread_threshold <= 0:
+            raise ValueError(f"spread_threshold must be > 0, got {spread_threshold}")
         self.spread_threshold = spread_threshold
         self._uni   = None
         self._sushi = None
@@ -86,7 +90,8 @@ class ArbitrageScanner:
             return float(r.json()["ethereum"]["usd"])
         try:
             return price_cache.get(_fetch)
-        except Exception:
+        except Exception as exc:
+            logger.debug("CoinGecko price fetch failed: %s", exc)
             return None
 
     def _live_prices(self) -> dict:

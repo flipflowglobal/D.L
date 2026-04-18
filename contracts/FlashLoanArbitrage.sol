@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: LicenseRef-Proprietary
 pragma solidity ^0.8.20;
 
 // ── Aave V3 Interfaces ────────────────────────────────────────────────────────
@@ -79,6 +79,25 @@ interface IUniswapV2Router02 {
     ) external returns (uint256[] memory amounts);
 }
 
+// ── ReentrancyGuard ───────────────────────────────────────────────────────────
+
+abstract contract ReentrancyGuard {
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+    uint256 private _status;
+
+    constructor() {
+        _status = _NOT_ENTERED;
+    }
+
+    modifier nonReentrant() {
+        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
+        _status = _ENTERED;
+        _;
+        _status = _NOT_ENTERED;
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  FlashLoanArbitrage
 //
@@ -95,12 +114,13 @@ interface IUniswapV2Router02 {
 //
 //  Safety:
 //    - onlyOwner and onlyPool guards
+//    - nonReentrant on executeOperation to prevent reentrancy via token hooks
 //    - minProfit check before completing the arb
 //    - DRY_RUN flag kept server-side; this contract is never deployed unless
 //      DRY_RUN=false and the operator explicitly calls initiate()
 // ─────────────────────────────────────────────────────────────────────────────
 
-contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
+contract FlashLoanArbitrage is IFlashLoanSimpleReceiver, ReentrancyGuard {
 
     // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -134,6 +154,8 @@ contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
     );
 
     event ProfitWithdrawn(address indexed to, uint256 amount, address token);
+
+    event MinProfitUpdated(uint256 oldValue, uint256 newValue);
 
     // ── Modifiers ─────────────────────────────────────────────────────────────
 
@@ -172,7 +194,7 @@ contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
         uint256 premium,
         address initiator,
         bytes calldata params
-    ) external override onlyPool returns (bool) {
+    ) external override onlyPool nonReentrant returns (bool) {
         require(initiator == address(this), "FLA: invalid initiator");
         require(asset == WETH, "FLA: asset must be WETH");
 
@@ -188,13 +210,13 @@ contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
         if (direction == BUY_UNI_SELL_SUSHI) {
             // Step 1: WETH → USDC on Uniswap V3
             uint256 usdcReceived = _swapWethToUsdcUniswap(amount, amountOutMin, deadline);
-            // Step 2: USDC → WETH on SushiSwap V2
-            wethEnd = _swapUsdcToWethSushi(usdcReceived, deadline);
+            // Step 2: USDC → WETH on SushiSwap V2 (enforce repayAmount as minimum)
+            wethEnd = _swapUsdcToWethSushi(usdcReceived, repayAmount, deadline);
         } else {
             // Step 1: WETH → USDC on SushiSwap V2
             uint256 usdcReceived = _swapWethToUsdcSushi(amount, amountOutMin, deadline);
-            // Step 2: USDC → WETH on Uniswap V3
-            wethEnd = _swapUsdcToWethUniswap(usdcReceived, deadline);
+            // Step 2: USDC → WETH on Uniswap V3 (enforce repayAmount as minimum)
+            wethEnd = _swapUsdcToWethUniswap(usdcReceived, repayAmount, deadline);
         }
 
         // ── Profit check ─────────────────────────────────────────────────────
@@ -241,7 +263,9 @@ contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
     // ── Admin ─────────────────────────────────────────────────────────────────
 
     function setMinProfit(uint256 _minProfitWei) external onlyOwner {
+        uint256 oldValue = minProfitWei;
         minProfitWei = _minProfitWei;
+        emit MinProfitUpdated(oldValue, _minProfitWei);
     }
 
     /// Withdraw any token (WETH profit or stuck tokens) to owner.
@@ -256,7 +280,8 @@ contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
     function withdrawEth() external onlyOwner {
         uint256 bal = address(this).balance;
         require(bal > 0, "FLA: no ETH");
-        payable(owner).transfer(bal);
+        (bool success, ) = payable(owner).call{value: bal}("");
+        require(success, "FLA: ETH transfer failed");
     }
 
     // ── Internal swap helpers ─────────────────────────────────────────────────
@@ -282,6 +307,7 @@ contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
 
     function _swapUsdcToWethUniswap(
         uint256 amountIn,
+        uint256 amountOutMin,
         uint256 deadline
     ) internal returns (uint256 amountOut) {
         IERC20(USDC).approve(UNI_ROUTER, amountIn);
@@ -292,7 +318,7 @@ contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
             recipient:         address(this),
             deadline:          deadline,
             amountIn:          amountIn,
-            amountOutMinimum:  0,   // no min on return leg — repay check covers it
+            amountOutMinimum:  amountOutMin,
             sqrtPriceLimitX96: 0
         });
         amountOut = ISwapRouter(UNI_ROUTER).exactInputSingle(p);
@@ -314,6 +340,7 @@ contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
 
     function _swapUsdcToWethSushi(
         uint256 amountIn,
+        uint256 amountOutMin,
         uint256 deadline
     ) internal returns (uint256 amountOut) {
         IERC20(USDC).approve(SUSHI_ROUTER, amountIn);
@@ -321,7 +348,7 @@ contract FlashLoanArbitrage is IFlashLoanSimpleReceiver {
         path[0] = USDC;
         path[1] = WETH;
         uint256[] memory amounts = IUniswapV2Router02(SUSHI_ROUTER)
-            .swapExactTokensForTokens(amountIn, 0, path, address(this), deadline);
+            .swapExactTokensForTokens(amountIn, amountOutMin, path, address(this), deadline);
         amountOut = amounts[amounts.length - 1];
     }
 

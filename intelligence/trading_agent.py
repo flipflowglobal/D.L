@@ -558,7 +558,7 @@ class TradingAgent:
             if price:
                 return price
         except Exception as exc:
-            logger.debug("CoinGecko fetch failed: %s", exc)
+            logger.debug("CoinGecko price fetch failed: %s", exc)
 
         # Static fallback per token
         fallbacks = {
@@ -589,7 +589,8 @@ class TradingAgent:
             r.raise_for_status()
             data = r.json()
             return float(data.get(cg_id, {}).get("usd", 0))
-        except Exception:
+        except Exception as exc:
+            logger.debug("CoinGecko direct fetch failed: %s", exc)
             return None
 
     # ── Public API ────────────────────────────────────────────────────────────
