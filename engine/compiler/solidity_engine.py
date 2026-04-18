@@ -589,11 +589,14 @@ class NexusSolidityEngine:
             data["optimize_runs"] = optimize_runs
         path.write_text(json.dumps(data, indent=2))
 
-        # Also write human-friendly ABI and bytecode files
-        (self.build_dir / f"{result.contract_name}.abi.json").write_text(
+        # Also write human-friendly ABI and bytecode files, namespaced by chain
+        # to avoid overwriting artifacts from the same contract compiled for
+        # different networks.
+        artifact_prefix = f"{result.contract_name}_{result.chain_id}"
+        (self.build_dir / f"{artifact_prefix}.abi.json").write_text(
             json.dumps(result.abi, indent=2)
         )
-        (self.build_dir / f"{result.contract_name}.bin").write_text(
+        (self.build_dir / f"{artifact_prefix}.bin").write_text(
             result.bytecode_hex
         )
         log.debug("[NEXUS] Artifacts saved: %s", path)
