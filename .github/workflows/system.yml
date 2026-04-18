@@ -2,9 +2,14 @@ name: System Validation
 
 on:
   push:
-    branches: ["**"]
+    branches: ["main"]
   pull_request:
     branches: ["main"]
+
+# Cancel previous runs for the same branch/PR to save resources
+concurrency:
+  group: system-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -14,6 +19,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -39,6 +45,7 @@ jobs:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     needs: lint
+    timeout-minutes: 15
 
     strategy:
       fail-fast: false
@@ -118,6 +125,7 @@ jobs:
     name: Docker build
     runs-on: ubuntu-latest
     needs: test
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
