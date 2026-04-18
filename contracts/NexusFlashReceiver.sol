@@ -376,7 +376,8 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
     function withdrawEth() external onlyOwner {
         uint256 bal = address(this).balance;
         require(bal > 0, "NFR: no ETH");
-        payable(owner).transfer(bal);
+        (bool ok, ) = payable(owner).call{value: bal}("");
+        require(ok, "NFR: ETH transfer failed");
     }
 
     // ── Fallback ──────────────────────────────────────────────────────────────

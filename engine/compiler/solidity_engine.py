@@ -479,13 +479,17 @@ class NexusSolidityEngine:
                 tf.write(source)
                 sol_path = tf.name
 
-            proc = subprocess.run(
-                [
-                    str(solc_bin), "--abi", "--bin", "--optimize",
-                    f"--optimize-runs={spec.optimize_runs}", sol_path,
-                ],
-                capture_output=True, text=True, timeout=60,
-            )
+            try:
+                proc = subprocess.run(
+                    [
+                        str(solc_bin), "--abi", "--bin", "--optimize",
+                        f"--optimize-runs={spec.optimize_runs}", sol_path,
+                    ],
+                    capture_output=True, text=True, timeout=60,
+                )
+            finally:
+                Path(sol_path).unlink(missing_ok=True)
+
             if proc.returncode != 0:
                 log.debug("[NEXUS] ARM solc error: %s", proc.stderr[:200])
                 return None

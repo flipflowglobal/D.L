@@ -161,7 +161,7 @@ class TestContractRegistry:
 
 class TestCompileResult:
 
-    def _make_result(self, bytecode: str = "deadbeef") -> "CompileResult":
+    def _make_result(self, bytecode: str = "deadbeef"):
         from engine.compiler.solidity_engine import CompileResult
         from web3 import Web3
         return CompileResult(
@@ -305,7 +305,7 @@ class TestNexusSolidityEngineCompile:
             solcx_mock.set_solc_version.return_value = None
             # Return empty bin to simulate failure
             solcx_mock.compile_source.return_value = {
-                f"<stdin>:FlashLoanArbitrage": {"abi": [], "bin": ""}
+                "<stdin>:FlashLoanArbitrage": {"abi": [], "bin": ""}
             }
 
             with patch("requests.post", side_effect=Exception("network unavailable")):
@@ -632,7 +632,7 @@ class TestFlashLoanArbitrageCalldata:
         builder = self._builder(w3)
 
         # estimate_gas returns 350_000; buffer 1.20 → 420_000
-        tx = builder.build(
+        _ = builder.build(
             sender=DUMMY_ADDR,
             amount_wei=int(1e18),
             direction=0,
