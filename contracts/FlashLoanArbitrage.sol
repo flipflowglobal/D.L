@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: LicenseRef-DarcelKing-Proprietary
 // Copyright (c) 2026 Darcel King. All Rights Reserved.
 pragma solidity ^0.8.20;
 
