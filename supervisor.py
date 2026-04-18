@@ -341,7 +341,7 @@ class Supervisor:
         return {
             "dex_oracle": {
                 "healthy":  self._dex.healthy,
-                "running":  self._dex.running if hasattr(self._dex, "running") else self._dex.is_running(),
+                "running":  self._dex.is_running(),
                 "restarts": self._dex._restarts,
                 "url":      DEX_URL,
                 "binary":   str(DEX_BINARY),

@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
@@ -132,7 +132,6 @@ class AgentLoop:
                 risk.record_trade()
                 action = "SELL"
 
-        sup_status = self._supervisor.status() if self._supervisor else {}
         pe_stats   = self._price_engine.stats() if self._price_engine else {}
 
         return {
@@ -171,16 +170,16 @@ class AgentLoop:
                 self._price_engine = None
 
         # Build engine in executor (one-time synchronous import + init)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         eng  = await loop.run_in_executor(None, self._build_engine)
 
         self.cycle_count = 0
         await memory.store(agent_id, "status",     "running")
-        await memory.store(agent_id, "started_at", datetime.utcnow().isoformat())
+        await memory.store(agent_id, "started_at", datetime.now(timezone.utc).isoformat())
 
         while self.running:
             self.cycle_count += 1
-            ts = datetime.utcnow().isoformat()
+            ts = datetime.now(timezone.utc).isoformat()
 
             try:
                 result = await self._run_cycle_async(eng, agent_id)

@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import os
 import re
-import time
 from typing import Optional, Tuple
 
 from web3 import Web3
