@@ -158,7 +158,6 @@ class SwarmOrchestrator:
 
     def metrics(self) -> Dict[str, Any]:
         """Return swarm-wide metrics."""
-        from intelligence.trading_agent import AgentStatus
         agents = list(self._registry._agents.values())
         by_status = {}
         by_strategy = {}
