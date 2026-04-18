@@ -73,7 +73,33 @@ info "Installing Python dependencies (Termux profile) …"
 "$PYTHON" -m pip install --quiet -r requirements-termux.txt
 info "Python dependencies installed"
 
-# ── 5. Optional: compile Cython extensions ───────────────────────────────────
+# ── 5. Solidity compiler (compiler.py resilient 4-layer chain) ───────────────
+# compiler.py supports ARM64 natively with a 4-layer fallback chain:
+#   Layer 1: py-solc-x + auto ARM64 binary injection
+#   Layer 2: Direct ARM64 solc binary download
+#   Layer 3: Remix online API (no binary needed)
+#   Layer 4: Embedded verified bytecode (offline, always works)
+info "Verifying Solidity compiler support …"
+if "$PYTHON" -c "import solcx; print('py-solc-x', solcx.__version__)" 2>/dev/null; then
+    info "py-solc-x installed — Layer 1 (ARM64 solc) available"
+else
+    warn "py-solc-x not installed — compiler.py will use Layers 2–4"
+    warn "  Layer 2: Direct ARM64 solc download"
+    warn "  Layer 3: Remix online API (requires internet)"
+    warn "  Layer 4: Embedded verified bytecode (always works)"
+fi
+echo
+read -rp "  Test compile FlashLoanArbitrage contract? (optional) [y/N] " COMPILE_ANS
+if [[ "${COMPILE_ANS,,}" == "y" ]]; then
+    info "Compiling FlashLoanArbitrage (compile-only, no deploy) …"
+    "$PYTHON" compiler.py --compile-only \
+        && info "Solidity compilation succeeded" \
+        || warn "Solidity compilation used fallback — check output above"
+else
+    info "Skipping compile test — run 'python compiler.py --compile-only' anytime"
+fi
+
+# ── 6. Optional: compile Cython extensions ───────────────────────────────────
 # The .pyx hot-path modules (portfolio, risk_manager, mean_reversion) fall back
 # to pure-Python equivalents when the .so files are absent, so this step is
 # optional on Termux.  Uncomment or answer 'y' to compile them.
@@ -90,11 +116,11 @@ else
     info "Skipping Cython compilation (pure-Python fallbacks active)"
 fi
 
-# ── 6. Create required directories ────────────────────────────────────────────
-mkdir -p vault logs DL_SYSTEM/data DL_SYSTEM/logs
+# ── 7. Create required directories ────────────────────────────────────────────
+mkdir -p vault logs build/solidity DL_SYSTEM/data DL_SYSTEM/logs
 info "Directories created"
 
-# ── 7. Set up .env ────────────────────────────────────────────────────────────
+# ── 8. Set up .env ────────────────────────────────────────────────────────────
 if [[ ! -f .env ]]; then
     cp .env.example .env
     warn ".env created from .env.example — edit it with your RPC_URL before running"
@@ -102,7 +128,7 @@ else
     info ".env already exists"
 fi
 
-# ── 8. Wallet setup ───────────────────────────────────────────────────────────
+# ── 9. Wallet setup ───────────────────────────────────────────────────────────
 if [[ ! -f vault/wallet.json ]]; then
     info "No wallet found — running wallet setup …"
     "$PYTHON" setup_wallet.py
@@ -111,7 +137,7 @@ else
     info "Existing wallet: $ADDR"
 fi
 
-# ── 9. Run smoke tests ────────────────────────────────────────────────────────
+# ── 10. Run smoke tests ────────────────────────────────────────────────────────
 info "Running test suite …"
 if "$PYTHON" -m pytest --tb=short -q; then
     info "All tests passed"
@@ -119,15 +145,15 @@ else
     warn "Some tests failed — review output above before going live"
 fi
 
-# ── 10. Done ──────────────────────────────────────────────────────────────────
+# ── 11. Done ──────────────────────────────────────────────────────────────────
 echo
 echo "  ╔══════════════════════════════════════════════╗"
 echo "  ║      Setup complete!                         ║"
 echo "  ╚══════════════════════════════════════════════╝"
 echo
-echo "  Running in Termux (Android) — active limitations:"
+echo "  Running in Termux (Android) — platform notes:"
 echo "    • uvloop disabled     → asyncio fallback (slightly slower, fully functional)"
-echo "    • py-solc-x skipped   → Solidity compilation unavailable"
+echo "    • Solidity compiler   → compiler.py supports ARM64 (4-layer fallback chain)"
 echo "    • playwright skipped  → DL_SYSTEM quest automation unavailable"
 echo "    • Docker unavailable  → use direct Python commands instead"
 echo
@@ -135,6 +161,13 @@ echo "  Next steps:"
 echo "    1. Edit .env  →  set RPC_URL (Alchemy / Infura endpoint)"
 echo "    2. Paper trade (safe — no real funds):"
 echo "         python trade.py"
-echo "    3. FastAPI server:"
+echo "    3. Compile & deploy flash loan contract:"
+echo "         python compiler.py --compile-only       # compile only"
+echo "         python compiler.py                      # compile + deploy"
+echo "    4. Run flash loan terminal:"
+echo "         python flashloan_terminal.py"
+echo "    5. FastAPI server:"
 echo "         uvicorn main:app --host 0.0.0.0 --port 8010"
+echo
+echo "  Full flash loan guide:  TERMUX_FLASHLOAN_GUIDE.md"
 echo
