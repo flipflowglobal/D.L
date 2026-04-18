@@ -1,19 +1,28 @@
-# main.py
+"""
+main.py — AUREON FastAPI entry-point.
+
+Exposes HTTP endpoints for controlling the autonomous agent loop,
+querying persisted memory, and health-checking the system.
+
+Run:
+    uvicorn main:app --host 0.0.0.0 --port 8000
+"""
+
+from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
-# ── uvloop: 2–4× faster event loop (Linux/macOS only) ────────────────────────
+# ── uvloop: 2-4x faster event loop (Linux/macOS only) ─────────────────────────
 try:
     import uvloop
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    uvloop.install()
 except ImportError:
-    pass  # uvloop not available (Windows / Android) — fall back to asyncio
+    pass  # uvloop not available (Windows / Android) — falls back to asyncio
 
-from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -27,22 +36,8 @@ from intelligence.trading_agent import (
     registry,
 )
 
-_logger = logging.getLogger("aureon.api")
-
-# ── Module-level task tracking ────────────────────────────────────────────────
-_agent_task: asyncio.Task | None = None
-
-# ── API key authentication ────────────────────────────────────────────────────
-_API_KEY = os.getenv("AUREON_API_KEY", "")
-
-
-async def _require_api_key(request: Request):
-    """Validate X-API-Key header if AUREON_API_KEY is configured."""
-    if not _API_KEY:
-        return  # no key configured — allow all (dev mode)
-    provided = request.headers.get("X-API-Key", "")
-    if provided != _API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+logger = logging.getLogger("aureon.main")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 
 # --------------------------------------------------
@@ -64,22 +59,23 @@ class CreateAgentRequest(BaseModel):
     rpc_url:         Optional[str] = Field(None,      description="Override RPC URL")
 
 
-# --------------------------------------------------
-# LIFESPAN — replaces deprecated @app.on_event
-# --------------------------------------------------
+# ── Lifespan: init / teardown ──────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Initialize DB on startup; ensure loop is stopped on shutdown."""
     await memory.init_db()
-    print("[AUREON] Memory database initialized")
-    print("[AUREON] Cognitive system online")
-    print("[AUREON] Multi-agent registry ready")
+    logger.info("Memory database initialized")
+    logger.info("Cognitive system online")
+    logger.info("Multi-agent registry ready")
     yield
+    # Graceful shutdown: signal the agent loop to stop
+    if loop.running:
+        loop.running = False
+        logger.info("Agent loop signalled to stop on shutdown")
 
 
-# --------------------------------------------------
-# CREATE FASTAPI APPLICATION
-# --------------------------------------------------
+# ── Application ────────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="AUREON Cognitive System",
@@ -94,12 +90,11 @@ app = FastAPI(
 )
 
 
-# --------------------------------------------------
-# ROOT ENDPOINT
-# --------------------------------------------------
+# ── Endpoints ──────────────────────────────────────────────────────────────────
 
-@app.get("/")
-async def root():
+@app.get("/", summary="System identity")
+async def root() -> dict:
+    """Return system name and current run-state."""
     return {
         "system": "AUREON",
         "status": "running",
@@ -108,12 +103,15 @@ async def root():
     }
 
 
-# --------------------------------------------------
-# SYSTEM STATUS
-# --------------------------------------------------
+@app.get("/health", summary="Health check")
+async def health() -> dict:
+    """Lightweight liveness probe — always 200 if the server is up."""
+    return {"status": "ok"}
 
-@app.get("/status")
-async def status():
+
+@app.get("/status", summary="Agent loop status")
+async def status() -> dict:
+    """Return whether the autonomous agent loop is currently active."""
     return {
         "agent_loop_running": loop.running,
         "multi_agent_count":  registry.count(),
@@ -127,40 +125,48 @@ async def status():
 # LEGACY AGENT START / STOP (backward compat)
 # --------------------------------------------------
 
-@app.post("/aureon/start")
-async def start_legacy_agent(agent_id: str, _auth=Depends(_require_api_key)):
-    global _agent_task
+@app.post("/aureon/start", summary="Start the agent loop")
+async def start_aureon_agent(agent_id: str) -> JSONResponse:
+    """
+    Launch the autonomous trading/reasoning loop for *agent_id*.
+
+    Returns 409 if the loop is already running.
+    """
+    if not agent_id or not agent_id.strip():
+        raise HTTPException(status_code=422, detail="agent_id must be a non-empty string")
 
     if loop.running:
-        return JSONResponse(content={"status": "already running", "agent_id": agent_id})
+        raise HTTPException(
+            status_code=409,
+            detail="Agent loop is already running. POST /aureon/stop first.",
+        )
 
     loop.running = True
-    _agent_task = asyncio.create_task(loop.run(agent_id))
+    asyncio.create_task(loop.run(agent_id))
+    logger.info("Agent loop started for agent_id=%s", agent_id)
 
-    def _on_done(task: asyncio.Task):
-        try:
-            exc = task.exception()
-            if exc:
-                _logger.error("Agent task failed: %s", exc)
-        except asyncio.CancelledError:
-            pass
-
-    _agent_task.add_done_callback(_on_done)
-
-    return JSONResponse(content={"status": "agent started", "agent_id": agent_id})
+    return JSONResponse(
+        status_code=200,
+        content={"status": "agent started", "agent_id": agent_id},
+    )
 
 
-@app.post("/aureon/stop")
-async def stop_legacy_agent(_auth=Depends(_require_api_key)):
-    global _agent_task
+@app.post("/aureon/stop", summary="Stop the agent loop")
+async def stop_aureon_agent() -> JSONResponse:
+    """Signal the autonomous loop to halt after its current iteration."""
+    if not loop.running:
+        return JSONResponse(
+            status_code=200,
+            content={"status": "agent was not running"},
+        )
 
     loop.running = False
+    logger.info("Agent loop stop requested")
 
-    if _agent_task and not _agent_task.done():
-        _agent_task.cancel()
-        _agent_task = None
-
-    return JSONResponse(content={"status": "agent stopped"})
+    return JSONResponse(
+        status_code=200,
+        content={"status": "agent stopped"},
+    )
 
 
 # --------------------------------------------------
@@ -336,20 +342,38 @@ async def list_tokens() -> Dict[str, Any]:
     }
 
 
-# --------------------------------------------------
-# MEMORY DEBUG ENDPOINT
-# --------------------------------------------------
+# ── Memory endpoints ────────────────────────────────────────────────────────────
 
-@app.get("/memory/{agent_id}/{key}")
-async def get_memory(agent_id: str, key: str, _auth=Depends(_require_api_key)):
+@app.get("/memory/{agent_id}", summary="List all memory keys for an agent")
+async def list_memory(agent_id: str) -> dict:
+    """Return all key→value pairs stored for *agent_id*."""
+    if not agent_id or not agent_id.strip():
+        raise HTTPException(status_code=422, detail="agent_id must be a non-empty string")
+
+    data = await memory.all(agent_id)
+    return {"agent_id": agent_id, "entries": data}
+
+
+@app.get("/memory/{agent_id}/{key}", summary="Read a single memory value")
+async def get_memory(agent_id: str, key: str) -> dict:
+    """
+    Return the stored value for (agent_id, key).
+
+    Returns ``{"value": null}`` when the key does not exist.
+    """
     value = await memory.retrieve(agent_id, key)
     return {"agent_id": agent_id, "key": key, "value": value}
 
 
-# --------------------------------------------------
-# HEALTH CHECK
-# --------------------------------------------------
+@app.delete("/memory/{agent_id}/{key}", summary="Delete a memory entry")
+async def delete_memory(agent_id: str, key: str) -> dict:
+    """Delete a single persisted key for *agent_id*."""
+    await memory.delete(agent_id, key)
+    return {"agent_id": agent_id, "key": key, "deleted": True}
 
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+
+@app.delete("/memory/{agent_id}", summary="Clear all memory for an agent")
+async def clear_memory(agent_id: str) -> dict:
+    """Remove every persisted key for *agent_id*."""
+    await memory.clear(agent_id)
+    return {"agent_id": agent_id, "cleared": True}
