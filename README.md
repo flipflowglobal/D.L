@@ -545,6 +545,6 @@ uvicorn main:app --host 0.0.0.0 --port 8010
 
 **Proprietary — All Rights Reserved © Darcel King**
 
-This software is not free, not open-source, and not available for download or
-use without the express written permission of Darcel King. See [LICENSE](LICENSE)
-for full terms.
+This software is not free or open-source and is not licensed for use, copying,
+modification, or redistribution without the express written permission of Darcel
+King. See [LICENSE](LICENSE) for full terms.
