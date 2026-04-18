@@ -32,10 +32,9 @@ class LiquidityMonitor:
         "?ids=ethereum&vs_currencies=usd"
     )
 
-    def __init__(self):
-        self._dex_oracle_url: Optional[str] = os.getenv(
-            "DEX_ORACLE_URL", "http://localhost:9001"
-        )
+    def __init__(self) -> None:
+        _addr = os.getenv("DEX_ORACLE_ADDR", "127.0.0.1:9001")
+        self._dex_oracle_url: str = f"http://{_addr}"
 
     # ── synchronous ───────────────────────────────────────────────────────────
 

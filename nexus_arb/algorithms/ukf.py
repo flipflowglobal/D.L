@@ -127,7 +127,6 @@ class UnscentedKalmanFilter:
         Returns array of shape (2n+1, n).
         """
         n = self.n
-        scale = math.sqrt((n + self._lam))
         try:
             L = np.linalg.cholesky((n + self._lam) * P)
         except np.linalg.LinAlgError:

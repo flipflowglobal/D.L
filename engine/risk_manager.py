@@ -107,6 +107,11 @@ class RiskManager:
         self._maybe_reset()
         return self._trade_count
 
+    @trade_count.setter
+    def trade_count(self, value: int) -> None:
+        """Allow direct assignment for testing and external integrations."""
+        self._trade_count = value
+
     def status(self) -> dict:
         """Return a snapshot of current risk state."""
         self._maybe_reset()

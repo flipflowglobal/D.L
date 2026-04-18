@@ -46,7 +46,7 @@ Formal Specification
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, List, Optional
 
 import numpy as np
@@ -185,10 +185,8 @@ class CMAES:
 
             # ── Weighted recombination ─────────────────────────────────────────
             selected_Y = Y[:, idx[:self._mu]]  # (n, mu)
-            selected_Z = Z[idx[:self._mu], :]  # (mu, n)
 
             y_w = selected_Y @ self._w          # weighted mean in y-space
-            m_old = m.copy()
             m = m + sigma * y_w
 
             # ── Step-size control (CSA) ────────────────────────────────────────
