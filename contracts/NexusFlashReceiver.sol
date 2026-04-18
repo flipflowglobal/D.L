@@ -299,14 +299,42 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
         amountOut = amounts[amounts.length - 1];
     }
 
+    function _callCurveExchange(SwapStep memory s, uint256 amountIn)
+        internal returns (uint256 amountOut)
+    {
+        (bool ok, bytes memory data) = s.router.call(
+            abi.encodeWithSignature(
+                "exchange(int128,int128,uint256,uint256)",
+                s.curveI,
+                s.curveJ,
+                amountIn,
+                s.amountOutMin
+            )
+        );
+        if (ok) {
+            return abi.decode(data, (uint256));
+        }
+
+        require(s.curveI >= 0 && s.curveJ >= 0, "NFR: negative curve index");
+
+        (ok, data) = s.router.call(
+            abi.encodeWithSignature(
+                "exchange(uint256,uint256,uint256,uint256)",
+                uint256(uint128(s.curveI)),
+                uint256(uint128(s.curveJ)),
+                amountIn,
+                s.amountOutMin
+            )
+        );
+        require(ok, "NFR: curve exchange failed");
+        return abi.decode(data, (uint256));
+    }
+
     function _swapCurve(SwapStep memory s, uint256 amountIn)
         internal returns (uint256 amountOut)
     {
         IERC20(s.tokenIn).approve(s.router, amountIn);
-        // Use stable-swap exchange(int128, int128, uint256, uint256)
-        amountOut = ICurvePool(s.router).exchange(
-            s.curveI, s.curveJ, amountIn, s.amountOutMin
-        );
+        amountOut = _callCurveExchange(s, amountIn);
     }
 
     function _swapBalancer(SwapStep memory s, uint256 amountIn)
