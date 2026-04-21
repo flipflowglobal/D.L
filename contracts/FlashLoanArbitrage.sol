@@ -1,4 +1,5 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
+// SPDX-License-Identifier: LicenseRef-DarcelKing-Proprietary
+// Copyright (c) 2026 Darcel King. All Rights Reserved.
 pragma solidity ^0.8.20;
 
 // ── Aave V3 Interfaces ────────────────────────────────────────────────────────
