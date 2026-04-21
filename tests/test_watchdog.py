@@ -20,9 +20,6 @@ import asyncio
 import importlib
 import os
 import sys
-import time
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -64,7 +61,7 @@ class TestEventBus:
 
     @pytest.mark.asyncio
     async def test_publish_and_receive(self):
-        from watchdog.event_bus import EventBus, EventSeverity, EventType
+        from watchdog.event_bus import EventBus
         bus = EventBus()
         received = []
 
@@ -118,7 +115,7 @@ class TestEventBus:
 class TestHealingStrategy:
 
     def test_approves_first_critical(self):
-        from watchdog.event_bus import EventSeverity, EventType
+        from watchdog.event_bus import EventSeverity
         from watchdog.healing.actions import HealEscalation, HealingStrategy
         strategy = HealingStrategy(cooldown_sec=0.0)
         event = _make_event(severity=EventSeverity.CRITICAL)
@@ -292,7 +289,7 @@ class TestConsensusEngine:
 
     @pytest.mark.asyncio
     async def test_solo_approval(self):
-        from watchdog.event_bus import EventSeverity, EventType
+        from watchdog.event_bus import EventSeverity
         from watchdog.mind.consensus import ConsensusEngine
         engine = ConsensusEngine()
         event = _make_event(severity=EventSeverity.CRITICAL)

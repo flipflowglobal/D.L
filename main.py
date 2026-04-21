@@ -42,7 +42,7 @@ try:
     from watchdog.event_bus import event_bus as _watchdog_bus
     from watchdog.dashboard import router as _watchdog_router, _capture_event
     _WATCHDOG_AVAILABLE = True
-except Exception as _wdog_err:
+except Exception:
     _WATCHDOG_AVAILABLE = False
     _watchdog_kernel = None  # type: ignore[assignment]
     _watchdog_bus    = None  # type: ignore[assignment]
