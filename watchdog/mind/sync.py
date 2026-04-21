@@ -27,11 +27,14 @@ and exposes:
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Coroutine, Dict, List, Optional
 
 from watchdog.mind.core      import MindCore, mind_core
 from watchdog.mind.consensus import ConsensusEngine, ConsensusResult, consensus_engine
 from watchdog.mind.shard     import AgentShard
+
+if TYPE_CHECKING:
+    from watchdog.event_bus import WatchdogEvent
 
 logger = logging.getLogger("watchdog.mind.sync")
 
