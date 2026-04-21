@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+
 from web3 import Web3
 from eth_abi import encode as abi_encode
 

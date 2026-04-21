@@ -501,8 +501,8 @@ class TradingAgent:
 
     async def _get_price(self) -> float:
         """
-        Fetch token price.  Uses RPC + on-chain DEX when rpc_url is configured;
-        falls back to CoinGecko → static default.
+        Fetch token price. Tries CoinGecko in an executor and, if unavailable,
+        falls back to a static per-token default price.
         """
         # Try CoinGecko (non-blocking via executor)
         try:
@@ -612,6 +612,7 @@ class AgentRegistry:
 
     def __init__(self) -> None:
         self._agents: Dict[str, TradingAgent] = {}
+        self._lock = asyncio.Lock()
 
     def create(self, config: TradingAgentConfig) -> TradingAgent:
         """Create, register, and return a new agent (not yet started)."""
@@ -627,13 +628,15 @@ class AgentRegistry:
         return agent
 
     async def start(self, agent_id: str) -> TradingAgent:
-        agent = self._get_or_raise(agent_id)
-        await agent.start()
+        async with self._lock:
+            agent = self._get_or_raise(agent_id)
+            await agent.start()
         return agent
 
     async def stop(self, agent_id: str) -> TradingAgent:
-        agent = self._get_or_raise(agent_id)
-        await agent.stop()
+        async with self._lock:
+            agent = self._get_or_raise(agent_id)
+            await agent.stop()
         return agent
 
     def get(self, agent_id: str) -> Optional[TradingAgent]:

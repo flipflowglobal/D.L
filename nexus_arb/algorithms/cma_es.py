@@ -88,6 +88,7 @@ class CMAES:
             raise ValueError("sigma0 must be positive")
 
         self.n = n_dim
+        self._sigma0 = sigma0
         self.rng = np.random.default_rng(seed)
 
         # Population / selection sizes
@@ -143,7 +144,7 @@ class CMAES:
 
         # State variables
         m  = x0.copy()               # distribution mean
-        sigma = float(self.sigma0_from_x0(x0))
+        sigma = float(self._sigma0 if self._sigma0 is not None else self.sigma0_from_x0(x0))
         ps = np.zeros(self.n)        # evolution path for σ
         pc = np.zeros(self.n)        # evolution path for C
         C  = np.eye(self.n)          # covariance matrix

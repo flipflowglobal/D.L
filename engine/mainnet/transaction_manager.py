@@ -353,10 +353,14 @@ class TransactionManager:
                 )
                 if receipt is not None:
                     r = self._parse_receipt(tx_hash, receipt)
-                    print(f"[TxManager] Confirmed block={r.block_number}  "
-                          f"gas_used={r.gas_used:,}  "
-                          f"price={r.effective_gas_price_gwei:.2f} gwei")
-                    return r
+                    required_confs = max(1, self._confs)
+                    current_block = self._w3.eth.block_number
+                    confirmations = max(0, current_block - r.block_number + 1)
+                    if confirmations >= required_confs:
+                        print(f"[TxManager] Confirmed block={r.block_number}  "
+                              f"gas_used={r.gas_used:,}  "
+                              f"price={r.effective_gas_price_gwei:.2f} gwei")
+                        return r
             except TransactionReverted:
                 raise
             except Exception as exc:
