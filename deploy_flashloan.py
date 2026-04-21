@@ -41,9 +41,9 @@ if not os.path.exists(BIN_PATH) or not os.path.exists(ABI_PATH):
         "Run: solc --bin --abi contracts/FlashLoanArbitrage.sol -o build/"
     )
 
-with open(BIN_PATH) as f:
+with open(BIN_PATH, encoding="utf-8") as f:
     bytecode = f.read().strip()
-with open(ABI_PATH) as f:
+with open(ABI_PATH, encoding="utf-8") as f:
     abi = f.read().strip()
 
 # --- Aave V3 Sepolia Pool and Uniswap V3 SwapRouter (official addresses) ---
@@ -61,11 +61,12 @@ contract = w3.eth.contract(abi=abi, bytecode=bytecode)
 nonce = w3.eth.get_transaction_count(account.address)
 
 tx = contract.constructor(POOL_ADDRESS, ROUTER_ADDRESS).build_transaction({
-    "chainId": w3.eth.chain_id,
-    "from": account.address,
-    "nonce": nonce,
-    "gas": 3_000_000,
-    "gasPrice": w3.eth.gas_price,
+    "chainId":              w3.eth.chain_id,
+    "from":                 account.address,
+    "nonce":                nonce,
+    "gas":                  3_000_000,
+    "maxFeePerGas":         w3.to_wei(100, "gwei"),
+    "maxPriorityFeePerGas": w3.to_wei(2,   "gwei"),
 })
 
 signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)

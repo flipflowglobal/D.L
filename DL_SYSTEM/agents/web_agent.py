@@ -1,3 +1,12 @@
+"""
+DL_SYSTEM/agents/web_agent.py — Legacy Playwright browser agent (v1).
+
+Superseded by web_agent_v2.py which adds human-delay helpers, a browser
+context with realistic user-agent, and network-idle waits.
+"""
+
+from __future__ import annotations
+
 try:
     from playwright.sync_api import sync_playwright
     _PLAYWRIGHT = True

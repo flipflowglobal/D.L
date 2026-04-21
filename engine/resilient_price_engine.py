@@ -35,10 +35,21 @@ logger = logging.getLogger("aureon.price_engine")
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-FALLBACK_PRICE     = float(os.getenv("FALLBACK_ETH_PRICE", "2000.0"))
-RUST_TIMEOUT       = float(os.getenv("RUST_SIDECAR_TIMEOUT", "0.5"))   # 500ms
-PYTHON_RPC_TIMEOUT = float(os.getenv("PYTHON_RPC_TIMEOUT", "8.0"))
-CIRCUIT_OPEN_SECS  = float(os.getenv("CIRCUIT_OPEN_SECS", "30.0"))     # skip broken source
+def _safe_float_env(key: str, default: float) -> float:
+    """Parse a float from an environment variable, falling back to default on error."""
+    val = os.getenv(key)
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        logger.warning("Invalid %s=%r, using default %.1f", key, val, default)
+        return default
+
+FALLBACK_PRICE     = _safe_float_env("FALLBACK_ETH_PRICE", 2000.0)
+RUST_TIMEOUT       = _safe_float_env("RUST_SIDECAR_TIMEOUT", 0.5)
+PYTHON_RPC_TIMEOUT = _safe_float_env("PYTHON_RPC_TIMEOUT", 8.0)
+CIRCUIT_OPEN_SECS  = _safe_float_env("CIRCUIT_OPEN_SECS", 30.0)
 
 
 class _CircuitBreaker:
@@ -196,12 +207,16 @@ class ResilientPriceEngine:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             prices  = {}
 
-            if self._uni and len(results) > 0 and not isinstance(results[0], Exception):
-                prices["uniswap_v3"] = results[0]
+            if self._uni and len(results) > 0:
+                r = results[0]
+                if isinstance(r, (int, float)) and not isinstance(r, bool) and r > 0:
+                    prices["uniswap_v3"] = float(r)
             if self._sushi:
                 idx = 1 if self._uni else 0
-                if len(results) > idx and not isinstance(results[idx], Exception):
-                    prices["sushiswap"] = results[idx]
+                if len(results) > idx:
+                    r = results[idx]
+                    if isinstance(r, (int, float)) and not isinstance(r, bool) and r > 0:
+                        prices["sushiswap"] = float(r)
 
             if prices:
                 self._cb_python.record_success()
@@ -212,27 +227,32 @@ class ResilientPriceEngine:
             self._cb_python.record_failure()
         return None
 
-    def _ensure_dex_clients(self):
+    def _ensure_dex_clients(self) -> None:
         """Lazy-import DEX clients only when the Python fallback is needed."""
         if self._uni is None and self._sushi is None:
+            rpc = os.getenv("RPC_URL") or os.getenv("ETH_RPC", "")
+            if not rpc:
+                logger.debug("No RPC_URL — Python DEX path unavailable")
+                return
+
             try:
                 from engine.dex.uniswap_v3 import UniswapV3
-                self._uni = UniswapV3()
+                self._uni = UniswapV3(rpc)
             except Exception as exc:
                 logger.debug("UniswapV3 client unavailable: %s", exc)
 
             try:
                 from engine.dex.sushiswap import SushiSwap
-                self._sushi = SushiSwap()
+                self._sushi = SushiSwap(rpc)
             except Exception as exc:
                 logger.debug("SushiSwap client unavailable: %s", exc)
 
     async def _uni_price_async(self) -> float:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._uni.get_best_eth_price)
 
     async def _sushi_price_async(self) -> float:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._sushi.get_eth_price_usdc)
 
     # ── Layer 3: CoinGecko (shared TTL cache) ─────────────────────────────────
@@ -254,7 +274,7 @@ class ResilientPriceEngine:
                     resp.raise_for_status()
                     return resp.json()["ethereum"]["usd"]
 
-                loop  = asyncio.get_event_loop()
+                loop  = asyncio.get_running_loop()
                 price = await loop.run_in_executor(None, lambda: self._cache.get(_fetch))
             else:
                 # No cache available — raw async call
@@ -279,7 +299,7 @@ class ResilientPriceEngine:
     def _ensure_cache(self):
         if self._cache is None:
             try:
-                from engine.price_cache import get_cache
-                self._cache = get_cache()
-            except Exception:
-                pass
+                from engine.price_cache import price_cache
+                self._cache = price_cache
+            except Exception as exc:
+                logger.debug("Price cache init failed: %s", exc)

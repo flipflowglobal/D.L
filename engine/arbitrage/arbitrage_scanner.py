@@ -12,15 +12,20 @@ Performance improvements over original:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import random
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
 
 from engine.price_cache import price_cache
 
 load_dotenv()
+
+logger = logging.getLogger("aureon.arbitrage_scanner")
 
 
 class ArbitrageScanner:
@@ -43,6 +48,8 @@ class ArbitrageScanner:
         rpc_url=_UNSET,
         spread_threshold: float = 0.003,    # 0.3 % minimum spread
     ):
+        if spread_threshold <= 0:
+            raise ValueError(f"spread_threshold must be > 0, got {spread_threshold}")
         self.spread_threshold = spread_threshold
         self._uni   = None
         self._sushi = None
@@ -61,13 +68,13 @@ class ArbitrageScanner:
                 self._sushi = SushiSwap(rpc)
                 if not self._uni.is_connected():
                     raise ConnectionError("Uniswap RPC not reachable")
-                print("[ArbitrageScanner] On-chain mode (Uniswap V3 + SushiSwap)")
+                logger.info("On-chain mode (Uniswap V3 + SushiSwap)")
             except Exception as exc:
-                print(f"[ArbitrageScanner] On-chain init failed ({exc}), using simulation")
+                logger.warning("On-chain init failed (%s), using simulation", exc)
                 self._uni   = None
                 self._sushi = None
         else:
-            print("[ArbitrageScanner] No RPC_URL — using simulation mode")
+            logger.info("No RPC_URL — using simulation mode")
 
     # ── price helpers ─────────────────────────────────────────────────────────
 
@@ -83,7 +90,8 @@ class ArbitrageScanner:
             return float(r.json()["ethereum"]["usd"])
         try:
             return price_cache.get(_fetch)
-        except Exception:
+        except Exception as exc:
+            logger.debug("CoinGecko price fetch failed: %s", exc)
             return None
 
     def _live_prices(self) -> dict:
@@ -171,7 +179,7 @@ class ArbitrageScanner:
                 return prices
 
         # Fallback to simulation using cached CoinGecko price
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         base = await loop.run_in_executor(None, self._coingecko_price) or 2000.0
         return self._simulated_prices(base)
 
@@ -186,6 +194,14 @@ class ArbitrageScanner:
         prices = await self.get_prices_async()
         return self._evaluate(prices)
 
+    async def scan_with_timeout(self, eth_price: float, timeout: float = 5.0) -> list:
+        """Scan with a hard timeout — returns [] on timeout to prevent cycle stalls."""
+        try:
+            return await asyncio.wait_for(self.scan_async(eth_price), timeout=timeout) or []
+        except asyncio.TimeoutError:
+            logger.warning("ArbitrageScanner.scan_async timed out after %.1fs", timeout)
+            return []
+
     # ── shared evaluation logic ───────────────────────────────────────────────
 
     def _evaluate(self, prices: dict) -> Optional[list]:
@@ -193,13 +209,15 @@ class ArbitrageScanner:
         Given a {dex_name: price} dict, find the best spread and return
         an opportunity list if it exceeds the threshold.
         """
-        if not prices:
+        if len(prices) < 2:
             return None
 
         min_dex = min(prices, key=prices.get)
         max_dex = max(prices, key=prices.get)
         low     = prices[min_dex]
         high    = prices[max_dex]
+        if low <= 0 or min_dex == max_dex:
+            return None
         spread  = (high - low) / low
 
         if spread >= self.spread_threshold:

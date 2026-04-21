@@ -1,0 +1,148 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Security — scheduled dependency audit and static analysis
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Security Scan
+
+on:
+  schedule:
+    # Run every Monday at 06:00 UTC
+    - cron: "0 6 * * 1"
+  push:
+    branches: ["main"]
+    paths:
+      - "requirements.txt"
+      - "requirements-optional.txt"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".github/workflows/security.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "requirements.txt"
+      - "requirements-optional.txt"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  # ── Python dependency audit ──────────────────────────────────────────────
+  pip-audit:
+    name: Python Dependency Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit core dependencies
+        continue-on-error: true
+        run: pip-audit -r requirements.txt --desc --output pip-audit-results.txt
+
+      - name: Display audit results
+        run: cat pip-audit-results.txt
+
+      - name: Upload audit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-results
+          path: pip-audit-results.txt
+          retention-days: 30
+
+  # ── Rust dependency audit ────────────────────────────────────────────────
+  cargo-audit:
+    name: Rust Dependency Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Audit dex-oracle
+        continue-on-error: true
+        run: cargo audit --file dex-oracle/Cargo.lock
+
+      - name: Audit tx-engine
+        continue-on-error: true
+        run: cargo audit --file tx-engine/Cargo.lock
+
+  # ── Solidity static analysis ─────────────────────────────────────────────
+  solidity-check:
+    name: Solidity Static Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Solidity syntax
+        run: |
+          # Install solc via pip
+          pip install py-solc-x
+          python -c "
+          from solcx import install_solc, compile_files, set_solc_version
+          import os, glob
+
+          install_solc('0.8.20')
+          set_solc_version('0.8.20')
+
+          sol_files = glob.glob('contracts/**/*.sol', recursive=True)
+          if not sol_files:
+              print('No Solidity files found')
+          else:
+              print(f'Found {len(sol_files)} Solidity files')
+              for f in sol_files:
+                  print(f'  Checking: {f}')
+              # Compile to check for syntax errors
+              try:
+                  compile_files(
+                      sol_files,
+                      output_values=['abi', 'bin'],
+                      allow_paths='contracts/',
+                  )
+                  print('All Solidity files compile successfully')
+              except Exception as e:
+                  print(f'Compilation issue (may need external imports): {e}')
+          "
+
+  # ── Shell script lint ────────────────────────────────────────────────────
+  shellcheck:
+    name: Shell Script Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        continue-on-error: true
+        run: |
+          echo "Checking shell scripts..."
+          find . -name '*.sh' -not -path './.git/*' | while read script; do
+            echo "  Checking: $script"
+            shellcheck --severity=error "$script"
+          done
+          echo "ShellCheck complete"

@@ -3,6 +3,9 @@ python-dotenv>=1.0.0
 requests>=2.31.0
 httpx>=0.25.0
 
+# ── Scientific computing (required by nexus_arb mathematical engine) ──────────
+numpy>=1.24.0
+
 # ── Blockchain ────────────────────────────────────────────────────────────────
 web3>=6.11.0
 eth-account>=0.10.0
@@ -20,6 +23,11 @@ pydantic>=2.0.0
 # ── Compilation tools ────────────────────────────────────────────────────────
 # cython>=3.0.0         # uncomment if not installed globally
 py-solc-x>=2.0.0        # Solidity compiler wrapper (Phase 4)
+
+# ── Nexus-ARB algorithms ─────────────────────────────────────────────────────
+numpy>=1.24.0
+torch>=2.0.0
+eth-abi>=4.0.0          # ABI encoding for flash loan calldata
 
 # ── Testing ───────────────────────────────────────────────────────────────────
 pytest>=8.0.0

@@ -80,11 +80,12 @@ tx = pool.functions.flashLoanSimple(
     b"",             # params (passed through to executeOperation)
     0,               # referralCode
 ).build_transaction({
-    "from": account.address,
-    "nonce": w3.eth.get_transaction_count(account.address),
-    "gas": 500_000,
-    "gasPrice": w3.eth.gas_price,
-    "chainId": w3.eth.chain_id,
+    "from":                 account.address,
+    "nonce":                w3.eth.get_transaction_count(account.address),
+    "gas":                  500_000,
+    "maxFeePerGas":         w3.to_wei(100, "gwei"),
+    "maxPriorityFeePerGas": w3.to_wei(2,   "gwei"),
+    "chainId":              w3.eth.chain_id,
 })
 
 signed_tx = account.sign_transaction(tx)
