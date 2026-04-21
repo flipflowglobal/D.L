@@ -36,6 +36,18 @@ from intelligence.trading_agent import (
     registry,
 )
 
+# ── Watchdog legion ───────────────────────────────────────────────────────────
+try:
+    from watchdog.kernel    import kernel as _watchdog_kernel
+    from watchdog.event_bus import event_bus as _watchdog_bus
+    from watchdog.dashboard import router as _watchdog_router, _capture_event
+    _WATCHDOG_AVAILABLE = True
+except Exception as _wdog_err:
+    _WATCHDOG_AVAILABLE = False
+    _watchdog_kernel = None  # type: ignore[assignment]
+    _watchdog_bus    = None  # type: ignore[assignment]
+    _watchdog_router = None  # type: ignore[assignment]
+
 logger = logging.getLogger("aureon.main")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -82,12 +94,34 @@ class PatchAgentRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize DB on startup; ensure loop is stopped on shutdown."""
+    """Initialize DB, start watchdog legion, shut everything down cleanly."""
+    # ── DB ──────────────────────────────────────────────────────────────────
     await memory.init_db()
     logger.info("Memory database initialized")
-    logger.info("Cognitive system online")
-    logger.info("Multi-agent registry ready")
+
+    # ── Watchdog legion ──────────────────────────────────────────────────────
+    if _WATCHDOG_AVAILABLE:
+        try:
+            _watchdog_bus.subscribe(_capture_event)          # feed dashboard event buffer
+            await _watchdog_kernel.start()                   # spawn all agents + mind
+            logger.info("Watchdog legion online (%d agents)", len(_watchdog_kernel.registry))
+        except Exception as exc:
+            logger.error("Watchdog failed to start (non-fatal): %s", exc)
+    else:
+        logger.warning("Watchdog unavailable — system running without self-healing")
+
+    logger.info("Cognitive system online — multi-agent registry ready")
     yield
+
+    # ── Teardown ─────────────────────────────────────────────────────────────
+    if _WATCHDOG_AVAILABLE and _watchdog_kernel:
+        try:
+            await _watchdog_kernel.stop()
+            logger.info("Watchdog legion shut down")
+        except Exception as exc:
+            logger.warning("Watchdog shutdown error (non-fatal): %s", exc)
+
+    loop.running = False
     await memory.close()
 
 
@@ -96,14 +130,32 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="AUREON Cognitive System",
     description=(
-        "Autonomous multi-strategy trading agent platform. "
-        "Create agents with configurable strategy, chain, and token. "
-        "Each agent auto-generates its own wallet and uses advanced "
-        "algorithms (Bellman-Ford, PPO, CMA-ES, Thompson Sampling, UKF)."
+        "Autonomous multi-strategy trading agent platform with self-healing "
+        "watchdog legion and shared-mind cross-agent synchronization. "
+        "Algorithms: Bellman-Ford, PPO, CMA-ES, Thompson Sampling, UKF."
     ),
-    version="2.0",
+    version="3.0",
     lifespan=lifespan,
 )
+
+# ── Mount watchdog dashboard at /watchdog ─────────────────────────────────────
+if _WATCHDOG_AVAILABLE and _watchdog_router is not None:
+    app.include_router(_watchdog_router)
+    logger.info("Watchdog dashboard mounted at /watchdog")
+
+
+# ── Watchdog helpers ──────────────────────────────────────────────────────────
+
+def _notify_trade_watchdog(expected_running: bool) -> None:
+    """Tell the TradeLoopAgent whether the loop is *supposed* to be running."""
+    if not _WATCHDOG_AVAILABLE or not _watchdog_kernel:
+        return
+    agent = _watchdog_kernel.registry.get("trade:aureon-loop")
+    if agent and hasattr(agent, "set_expected_running"):
+        try:
+            agent.set_expected_running(expected_running)
+        except Exception:
+            pass
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -121,20 +173,40 @@ async def root() -> dict:
 
 @app.get("/health", summary="Health check")
 async def health() -> dict:
-    """Lightweight liveness probe — always 200 if the server is up."""
-    return {"status": "ok"}
+    """
+    Liveness probe — 200 if the server is up.
+    Includes watchdog overall state when available.
+    """
+    result: dict = {"status": "ok", "version": "3.0"}
+    if _WATCHDOG_AVAILABLE and _watchdog_kernel and _watchdog_kernel._started:
+        snap = _watchdog_kernel.health_snapshot()
+        mind = snap.get("mind", {})
+        result["watchdog"] = {
+            "state":          mind.get("overall_state", "unknown"),
+            "agents":         snap.get("total_agents", 0),
+            "criticals":      snap.get("critical_events", 0),
+            "heals":          snap.get("heals_performed", 0),
+        }
+    return result
 
 
 @app.get("/status", summary="Agent loop status")
 async def status() -> dict:
     """Return whether the autonomous agent loop is currently active."""
-    return {
+    result: dict = {
         "agent_loop_running": loop.running,
         "multi_agent_count":  registry.count(),
         "strategies":         [s.value for s in Strategy],
         "chains":             [c.value for c in Chain],
         "tokens":             [t.value for t in Token],
     }
+    if _WATCHDOG_AVAILABLE and _watchdog_kernel and _watchdog_kernel._started:
+        result["watchdog_online"]  = True
+        result["watchdog_agents"]  = len(_watchdog_kernel.registry)
+        result["mind_state"]       = _watchdog_kernel.mind.global_snapshot().get("overall_state")
+    else:
+        result["watchdog_online"] = False
+    return result
 
 
 # --------------------------------------------------
@@ -163,6 +235,9 @@ async def start_aureon_agent(agent_id: str) -> JSONResponse:
     _agent_task = asyncio.create_task(loop.run(agent_id))
     logger.info("Agent loop started for agent_id=%s", agent_id)
 
+    # Inform the watchdog that the loop is now intentionally running
+    _notify_trade_watchdog(expected_running=True)
+
     return JSONResponse(
         status_code=200,
         content={"status": "agent started", "agent_id": agent_id},
@@ -180,6 +255,9 @@ async def stop_aureon_agent() -> JSONResponse:
 
     loop.running = False
     logger.info("Agent loop stop requested")
+
+    # Inform the watchdog the loop is now intentionally stopped
+    _notify_trade_watchdog(expected_running=False)
 
     return JSONResponse(
         status_code=200,
