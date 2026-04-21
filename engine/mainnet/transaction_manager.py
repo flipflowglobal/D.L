@@ -232,6 +232,23 @@ class TransactionManager:
 
         return tx
 
+    def estimate_gas(self, tx: dict) -> int:
+        """
+        Estimate gas for a transaction using eth_estimateGas.
+
+        Returns
+        -------
+        int  estimated gas units (add 20% buffer before using as gasLimit)
+
+        Raises
+        ------
+        ValueError  if estimation fails (e.g., would revert)
+        """
+        try:
+            return self._w3.eth.estimate_gas(tx)
+        except Exception as exc:
+            raise ValueError(f"Gas estimation failed: {exc}") from exc
+
     # ── sign and send ─────────────────────────────────────────────────────────
 
     def sign_and_send(self, tx: dict) -> str:

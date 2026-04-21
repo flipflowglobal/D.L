@@ -243,7 +243,7 @@ class Supervisor:
             try:
                 await self._monitor
             except asyncio.CancelledError:
-                pass
+                pass  # expected when the monitor task is cancelled during shutdown
 
         self._dex.stop()
         self._tx.stop()
