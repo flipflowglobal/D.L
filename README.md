@@ -1,7 +1,7 @@
-# AUREON — On-The-DL Trading System
+# AUREON — Autonomous DeFi Trading & Agent Platform
 
-Autonomous DeFi trading bot for Ethereum mainnet.
-Supports paper trading, live on-chain swaps via Uniswap V3, cross-DEX arbitrage scanning, and a FastAPI cognitive agent server.
+> Production-grade autonomous DeFi trading system — multi-strategy, multi-chain, self-healing.
+> Supports paper trading, live on-chain swaps, flash loan arbitrage, multi-agent swarms, and a full REST API.
 
 ---
 
@@ -10,15 +10,22 @@ Supports paper trading, live on-chain swaps via Uniswap V3, cross-DEX arbitrage 
 1. [Architecture Overview](#architecture-overview)
 2. [Prerequisites](#prerequisites)
 3. [Installation](#installation)
-4. [Wallet Setup](#wallet-setup)
-5. [Configuration (.env)](#configuration-env)
-6. [Running the Trading Bot](#running-the-trading-bot)
-7. [Running the API Server](#running-the-api-server)
-8. [Running DL\_SYSTEM](#running-dl_system)
-9. [Module Reference](#module-reference)
-10. [Security Checklist](#security-checklist)
-11. [Troubleshooting](#troubleshooting)
-12. [Project Status](#project-status)
+4. [Build System](#build-system)
+5. [Wallet Setup](#wallet-setup)
+6. [Configuration](#configuration)
+7. [Running the Trading Bot](#running-the-trading-bot)
+8. [Running the API Server](#running-the-api-server)
+9. [Watchdog Self-Healing System](#watchdog-self-healing-system)
+10. [Multi-Agent Swarm](#multi-agent-swarm)
+11. [API Reference](#api-reference)
+12. [Running DL_SYSTEM](#running-dl_system)
+13. [Smart Contracts](#smart-contracts)
+14. [Rust Sidecars](#rust-sidecars)
+15. [Docker Deployment](#docker-deployment)
+16. [Module Reference](#module-reference)
+17. [Security Checklist](#security-checklist)
+18. [Troubleshooting](#troubleshooting)
+19. [Project Status](#project-status)
 
 ---
 
@@ -26,146 +33,245 @@ Supports paper trading, live on-chain swaps via Uniswap V3, cross-DEX arbitrage 
 
 ```
 AUREON/
-├── trade.py                      # Main trading bot  (paper + live)
-├── setup_wallet.py               # One-time wallet setup
-├── main.py                       # FastAPI cognitive agent server
+├── main.py                        # FastAPI server — 40+ REST endpoints
+├── trade.py                       # CLI trading bot (paper / live / flash)
+├── config.py                      # Environment variable loader
+├── compiler.py                    # Solidity compiler & contract deployer
+├── build.py                       # Parallel build orchestrator
 │
-├── engine/
-│   ├── market_data.py            # ETH/USD price via CoinGecko
-│   ├── portfolio.py              # Balance tracking, P&L, trade log
-│   ├── risk_manager.py           # Daily trade limits
-│   ├── dex/
-│   │   ├── uniswap_v3.py         # On-chain Uniswap V3 price quotes
-│   │   ├── sushiswap.py          # On-chain SushiSwap price quotes
-│   │   └── liquidity_monitor.py  # DEX liquidity price feed
+├── engine/                        # Core trading engine
+│   ├── market_data.py             # ETH/USD price feed (CoinGecko, cached)
+│   ├── portfolio.py               # Balance tracking, P&L, trade log (Cython)
+│   ├── risk_manager.py            # Position limits, daily caps (Cython)
+│   ├── price_cache.py             # TTL-based price cache singleton
 │   ├── arbitrage/
-│   │   └── arbitrage_scanner.py  # Cross-DEX spread detector
-│   ├── strategies/
-│   │   └── mean_reversion.py     # BUY / SELL / HOLD signal generator
-│   └── execution/
-│       ├── executor.py           # Paper trade executor
-│       ├── swap_executor.py      # Live Uniswap V3 swap executor
-│       └── web3_executor.py      # Raw ETH transfer executor
+│   │   └── arbitrage_scanner.py   # Cross-DEX spread detector
+│   ├── dex/
+│   │   ├── uniswap_v3.py          # On-chain Uniswap V3 quoter
+│   │   ├── sushiswap.py           # SushiSwap router
+│   │   └── liquidity_monitor.py   # DEX liquidity feed
+│   ├── execution/
+│   │   ├── executor.py            # Paper trade executor
+│   │   ├── swap_executor.py       # Live Uniswap V3 / EIP-1559 swaps
+│   │   └── web3_executor.py       # Raw ETH transfer executor
+│   └── strategies/
+│       └── mean_reversion.py      # Statistical signal generator (Cython)
 │
-├── vault/                        # Wallet storage (git-ignored)
-│   ├── wallet.json               # Address + private key  (chmod 600)
-│   └── trade_log.json            # Trade history
+├── intelligence/                  # Multi-agent AI system
+│   ├── trading_agent.py           # Agent definitions, registry, lifecycle
+│   ├── autonomy.py                # Autonomous trading loop core
+│   ├── memory.py                  # Async SQLite agent memory
+│   ├── swarm.py                   # Swarm coordinator & consensus engine
+│   └── alchemy_client.py          # Alchemy RPC enhanced client
 │
-├── intelligence/
-│   ├── memory.py                 # Async SQLite key-value store
-│   └── autonomy.py               # Agent loop (integrates trading engine)
+├── nexus_arb/                     # Advanced algorithms
+│   ├── bellman_ford.py            # Negative-cycle DEX arbitrage
+│   ├── ppo_agent.py               # PPO actor-critic RL policy
+│   ├── cma_es.py                  # CMA-ES parameter optimiser
+│   ├── thompson_sampling.py       # Multi-armed bandit DEX router
+│   └── kalman_filter.py           # Unscented Kalman Filter (price)
 │
-└── DL_SYSTEM/                    # Quest / airdrop automation
-    ├── main.py
-    ├── core/   (orchestrator, state, logger, config)
-    ├── agents/ (task_agent, web_agent_v2)
-    └── integrations/ (galxe, layer3)
+├── watchdog/                      # Self-healing monitoring system
+│   ├── kernel.py                  # WatchdogKernel orchestrator
+│   ├── event_bus.py               # Typed async event bus
+│   ├── dashboard.py               # Health dashboard (REST endpoints)
+│   ├── registry.py                # Agent registry & discovery
+│   ├── agents/
+│   │   ├── base.py                # WatchdogAgent base class
+│   │   ├── file_agent.py          # File integrity monitor
+│   │   ├── process_agent.py       # Process uptime & CPU monitor
+│   │   ├── service_agent.py       # HTTP health checks (sidecars)
+│   │   ├── db_agent.py            # SQLite integrity monitor
+│   │   ├── resource_agent.py      # CPU / memory / disk monitor
+│   │   └── trade_agent.py         # Trading loop liveness monitor
+│   ├── healing/
+│   │   └── actions.py             # HealingStrategy gate-keeper
+│   └── mind/                      # SharedMind cross-agent consensus
+│       ├── shard.py               # Per-agent memory shard (vector clock)
+│       ├── core.py                # MindCore synchronisation hub
+│       ├── consensus.py           # Quorum-based heal proposals
+│       └── sync.py                # SyncBridge & SharedMind façade
+│
+├── vault/                         # Wallet storage (git-ignored)
+│   ├── wallet.json                # Encrypted private key
+│   └── wallet_config.py           # Web3 connection + signing
+│
+├── DL_SYSTEM/                     # Quest & airdrop automation
+│   ├── main.py                    # Orchestrator (10-min cycles)
+│   ├── core/
+│   │   ├── orchestrator.py        # Task scheduling
+│   │   ├── state_manager.py       # Persistent state (file-locked)
+│   │   ├── logger.py              # Timezone-aware UTC logging
+│   │   └── integrity.py           # File integrity verification
+│   └── agents/
+│       ├── galxe_agent.py         # Galxe quest automation
+│       └── layer3_agent.py        # Layer3 task automation
+│
+├── contracts/                     # Solidity smart contracts
+│   ├── FlashLoanArbitrage.sol     # Flash loan arbitrage executor
+│   ├── NexusFlashReceiver.sol     # Aave V3 flash receiver
+│   └── interfaces/                # DEX / lending protocol interfaces
+│
+├── dex-oracle/                    # Rust sidecar — DEX price oracle
+│   └── src/main.rs                # Axum HTTP API on port 9001
+│
+├── tx-engine/                     # Rust sidecar — TX signing engine
+│   └── src/main.rs                # Axum HTTP API on port 9002
+│
+├── build/                         # Compiled artifacts
+│   ├── cython/                    # .so Cython extensions
+│   ├── solidity/                  # ABI + bytecode
+│   └── report.json                # Build timings & status
+│
+├── scripts/
+│   ├── lint_alignment.py          # AI safety scanner
+│   └── merkle_lint.py             # Lint result Merkle aggregator
+│
+├── tests/                         # pytest suite
+│   ├── conftest.py                # Network mocking fixtures
+│   ├── test_watchdog.py           # Watchdog integration tests (44 tests)
+│   └── test_mainnet.py            # Mainnet integration tests (skipped offline)
+│
+├── .github/
+│   └── workflows/
+│       ├── ci.yml                 # CI: lint + test + docker build
+│       ├── ci-lint.yml            # Lint gate: pyflakes + clippy + solhint
+│       ├── system.yml             # System validation + integrity check
+│       ├── python-package.yml     # Multi-version Python build
+│       ├── copilot-setup-steps.yml # Copilot AI agent setup
+│       └── security.yml           # CodeQL + dependency audit
+│
+├── Dockerfile                     # Multi-stage: base → deps → test → api/bot
+├── build.py                       # Build orchestrator (parallel)
+├── setup_cython.py                # Cython compiler configuration
+├── compiler.py                    # Solidity compiler + deployer
+├── requirements.txt               # Python dependencies
+└── pytest.ini                     # Test configuration
 ```
 
 ---
 
 ## Prerequisites
 
-| Requirement | Minimum | Notes |
-|---|---|---|
-| Python | 3.10+ | `python3 --version` |
-| pip | latest | `pip install --upgrade pip` |
-| RPC endpoint | — | Free Alchemy or Infura account |
-| ETH wallet | — | Created by `setup_wallet.py` or imported |
-| ETH balance | ≥ 0.05 ETH | Gas fees + trade capital for live mode |
+| Requirement | Minimum | Recommended |
+|-------------|---------|-------------|
+| Python | 3.10 | 3.11 |
+| Rust + Cargo | 1.70 | latest stable |
+| Node.js | 18 | 20 (for solhint) |
+| RPC endpoint | Any Ethereum JSON-RPC | Alchemy / Infura |
+| ETH wallet | Any EOA | Hardware wallet address |
 
 ---
 
 ## Installation
 
 ```bash
-# 1. Clone the repository
+# 1. Clone
 git clone https://github.com/flipflowglobal/D.L.git
 cd D.L
 
-# 2. Create and activate a virtual environment
-python3 -m venv venv
-source venv/bin/activate        # Linux / macOS
-# venv\Scripts\activate         # Windows
+# 2. Create virtual environment
+python -m venv .venv
+source .venv/bin/activate       # Linux/macOS
+# .venv\Scripts\activate        # Windows
 
-# 3. Install all dependencies
+# 3. Install Python dependencies
 pip install -r requirements.txt
 
-# 4. (Optional) Install Playwright browsers — only needed for DL_SYSTEM quest tasks
-playwright install chromium
+# 4. Build compiled extensions (Cython + Rust + Solidity)
+python build.py
+
+# 5. Copy and edit environment config
+cp .env.example .env
+nano .env
 ```
+
+---
+
+## Build System
+
+AUREON uses a parallel async build orchestrator (`build.py`) that compiles four pipelines simultaneously.
+
+### Run Full Build
+
+```bash
+python build.py
+```
+
+Output — `build/report.json`:
+```json
+{
+  "wall_clock_seconds": 1.66,
+  "pipelines": { "cython": "ok", "rust_dex": "ok", "rust_tx": "ok", "solidity": "ok" }
+}
+```
+
+### Selective Builds
+
+```bash
+python build.py --cython     # Cython .so extensions only
+python build.py --rust       # Both Rust sidecars only
+python build.py --sol        # Solidity contracts only
+python build.py --clean      # Remove all build artifacts
+```
+
+### What Gets Built
+
+| Pipeline | Source | Output | Time |
+|----------|--------|--------|------|
+| **Cython** | `engine/portfolio.pyx`, `risk_manager.pyx`, `strategies/mean_reversion.pyx` | `build/cython/*.so` | ~1.5s |
+| **Rust dex-oracle** | `dex-oracle/src/` | `dex-oracle/target/release/dex-oracle` (6.9 MB) | ~30s cold / cached |
+| **Rust tx-engine** | `tx-engine/src/` | `tx-engine/target/release/tx-engine` (6.6 MB) | ~30s cold / cached |
+| **Solidity** | `contracts/FlashLoanArbitrage.sol` | `build/solidity/*.abi`, `*.bin` | ~0.3s |
+
+### Cython Optimisation Flags
+
+All Cython extensions compile with maximum optimisation:
+- `-O3 -march=native -ffast-math -funroll-loops` (Linux/macOS)
+- `/O2 /fp:fast /arch:AVX2` (Windows)
+- `-O2 -ffast-math` (Android/ARM64 Termux)
 
 ---
 
 ## Wallet Setup
 
-Run **once** before starting the bot:
-
 ```bash
 python setup_wallet.py
 ```
 
-```
-  ╔══════════════════════════════════════╗
-  ║      AUREON  —  Wallet Setup          ║
-  ╚══════════════════════════════════════╝
+Follow the prompts to generate a new wallet or import an existing private key. The encrypted wallet is saved to `vault/wallet.json` (git-ignored).
 
-  [1] Generate a new wallet
-  [2] Import an existing private key
-
-  Choice [1/2]:
-```
-
-**Option 1 — Generate new wallet**
-Creates a fresh Ethereum address. Back up the private key shown on screen — it is never stored anywhere else.
-
-**Option 2 — Import existing wallet** (MetaMask / Trust Wallet / Ledger export)
-- MetaMask: Settings → Security & Privacy → Reveal Secret / Export Private Key
-- Trust Wallet: Settings → Wallets → select wallet → Export private key
-
-The script saves to `vault/wallet.json` (chmod 600) and automatically patches `WALLET_ADDRESS` and `PRIVATE_KEY` in `.env`.
+**Never commit your private key or wallet.json.**
 
 ---
 
-## Configuration (.env)
+## Configuration
 
-```bash
-nano .env    # or any text editor
-```
-
-### Required
+Copy `.env.example` to `.env` and fill in your values:
 
 ```env
-# Ethereum mainnet RPC — get a free key at alchemy.com or infura.io
-RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY
+# ── Required ──────────────────────────────────────────────────────────────────
+RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+PRIVATE_KEY=0xYOUR_PRIVATE_KEY
+WALLET_ADDRESS=0xYOUR_WALLET_ADDRESS
 
-# Filled automatically by setup_wallet.py
-WALLET_ADDRESS=0xYourAddress
-PRIVATE_KEY=your64hexcharacterprivatekey
-```
+# ── Optional: Alchemy API key (alternative to full RPC_URL) ───────────────────
+ALCHEMY_API_KEY=YOUR_KEY
 
-**Get a free RPC key:**
-1. Create account at [alchemy.com](https://www.alchemy.com) (free)
-2. New App → Ethereum → Mainnet
-3. Copy the **HTTPS** URL → paste as `RPC_URL`
+# ── Trading Parameters ────────────────────────────────────────────────────────
+TRADE_SIZE_ETH=0.05          # ETH per trade
+SCAN_INTERVAL=30             # seconds between scans
+MIN_PROFIT_USD=2.0           # minimum profitable spread
+GAS_BUDGET_USD=5.0           # max gas cost per trade
+INITIAL_USD=10000            # paper trading starting balance
+MAX_DAILY_TRADES=20          # hard daily cap
+MAX_POSITION_USD=2000        # max single position size
 
-### Trading parameters (optional — defaults shown)
+# ── Blockchain ────────────────────────────────────────────────────────────────
+CHAIN_ID=1                   # 1=Ethereum, 42161=Arbitrum, 137=Polygon
+DRY_RUN=true                 # paper trading mode (set false for live)
 
-```env
-SCAN_INTERVAL=30          # seconds between cycles
-TRADE_SIZE_ETH=0.05       # ETH amount per trade
-MIN_PROFIT_USD=2.0        # minimum arbitrage profit to execute (USD)
-GAS_BUDGET_USD=5.0        # max gas cost allowed per transaction (USD)
-INITIAL_USD=10000         # starting paper-portfolio value for P&L
-STRATEGY_WINDOW=12        # mean-reversion price lookback (cycles)
-STRATEGY_THRESHOLD=0.015  # % deviation from mean to trigger a signal
-MAX_DAILY_TRADES=20       # risk guard: max trades per day
-MAX_POSITION_USD=2000     # risk guard: max single-position size (USD)
-```
-
-### DL_SYSTEM quest credentials (optional)
-
-```env
+# ── Quest Automation (DL_SYSTEM) ──────────────────────────────────────────────
 GALXE_EMAIL=your@email.com
 GALXE_PASSWORD=yourpassword
 LAYER3_EMAIL=your@email.com
@@ -176,375 +282,431 @@ LAYER3_PASSWORD=yourpassword
 
 ## Running the Trading Bot
 
-### Step 1 — Paper trading (recommended first)
-
-No wallet funding needed. Uses live prices but **never sends transactions**.
+### Paper Trading (safe, no real funds)
 
 ```bash
 python trade.py
 ```
 
-```
-  ╔══════════════════════════════════════════════════╗
-  ║  AUREON Trading Bot  —  PAPER TRADING            ║
-  ╚══════════════════════════════════════════════════╝
-  Wallet  : 0xYourAddress
-  Interval: 30s  |  Trade size: 0.05 ETH
-  Min profit: $2.0  |  Gas budget: $5.0
-
-  ── Cycle    1  [2025-04-01 12:00:00 UTC] ──────────────
-  ETH/USD  : $3,412.50
-  SIGNAL   : HOLD
-  PORTFOLIO: $10,000.00 USD  0.0000 ETH  P&L: $+0.00
-
-  ── Cycle    2  [2025-04-01 12:00:30 UTC] ──────────────
-  ETH/USD  : $3,406.10
-  ARB OPP  : buy sushiswap @ $3,402.80 → sell uniswap_v3 @ $3,412.50
-             | spread 0.285% | est $1.36
-  PORTFOLIO: $10,000.00 USD  0.0000 ETH  P&L: $+0.00
-```
-
-Press `Ctrl+C` to stop. Trade log saved to `vault/trade_log.json`.
-
-### Step 2 — Live mainnet trading
-
-> **Warning:** Real ETH will be spent. Start with a small `TRADE_SIZE_ETH` (e.g. `0.01`).
+### Live Trading (real ETH — use with caution)
 
 ```bash
-python trade.py --live
+DRY_RUN=false python trade.py --live
 ```
 
-You will be prompted to type `YES` before any transaction is sent:
-
-```
-  *** LIVE MODE — real funds will be used ***
-  Type YES to confirm: YES
-```
-
-**What the bot does each cycle:**
-1. Fetches ETH/USD price from CoinGecko
-2. Queries Uniswap V3 and SushiSwap for on-chain prices
-3. If spread ≥ 0.3% and estimated profit ≥ `MIN_PROFIT_USD` → executes arbitrage swap
-4. Otherwise applies mean-reversion signal (BUY / SELL / HOLD)
-5. Enforces gas budget and daily trade limits before every transaction
-
-### Running in the background
+### Flash Loan Arbitrage
 
 ```bash
-nohup python trade.py > trade.log 2>&1 &
-echo $! > trade.pid
-
-tail -f trade.log       # watch live output
-kill $(cat trade.pid)   # stop
+python trade.py --flash
 ```
+
+### Trading Strategies
+
+| Flag | Strategy | Algorithm |
+|------|----------|-----------|
+| `--strategy arb` | Cross-DEX arbitrage | Bellman-Ford negative cycle |
+| `--strategy ppo` | RL policy | PPO actor-critic |
+| `--strategy mean_reversion` | Mean reversion | CMA-ES optimisation |
+| `--strategy flash_loan` | Flash loan arb | Thompson Sampling bandit |
+| `--strategy adaptive` | Adaptive | UKF + Thompson Sampling |
 
 ---
 
 ## Running the API Server
 
-The FastAPI server lets you control the trading agent via HTTP and monitor memory.
-
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8010
+uvicorn main:app --host 0.0.0.0 --port 8010 --reload
 ```
 
-### Endpoints
+The server starts on **port 8010**. Interactive docs available at:
+- **Swagger UI:** `http://localhost:8010/docs`
+- **ReDoc:** `http://localhost:8010/redoc`
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/` | System info |
-| `GET` | `/health` | Health check → `{"health":"ok"}` |
-| `GET` | `/status` | Agent running state |
-| `POST` | `/aureon/start?agent_id=AUREON` | Start autonomous trading agent |
-| `POST` | `/aureon/stop` | Stop agent gracefully |
-| `GET` | `/memory/{agent_id}/{key}` | Read a memory value |
+---
 
-### Quick start via curl
+## Watchdog Self-Healing System
 
-```bash
-# Start server in background
-nohup uvicorn main:app --host 0.0.0.0 --port 8010 > aureon.log 2>&1 &
+AUREON includes a built-in self-healing watchdog that monitors all system components and automatically recovers from failures.
 
-# Launch agent
-curl -X POST "http://localhost:8010/aureon/start?agent_id=AUREON"
+### 6 Monitoring Agents
 
-# Check if running
-curl http://localhost:8010/status
+| Agent | Monitors | Poll Interval | Healing Action |
+|-------|----------|---------------|----------------|
+| **FileAgent** | vault/, database, log files | 15s | `git checkout` restore |
+| **ProcessAgent** | Process uptime, CPU usage | 10s | Process restart |
+| **ServiceAgent** | HTTP health checks (sidecars) | 10s | Sidecar restart |
+| **DatabaseAgent** | SQLite integrity & locks | 60s | VACUUM + recreate |
+| **ResourceAgent** | CPU, memory, disk | 30s | Cache eviction |
+| **TradeLoopAgent** | Trading loop liveness | 20s | Loop restart |
 
-# Read last trade action from agent memory
-curl http://localhost:8010/memory/AUREON/last_result
+### SharedMind Consensus
 
-# Stop agent
-curl -X POST http://localhost:8010/aureon/stop
+Before any heal executes, the **SharedMind** consensus engine runs a quorum vote:
+
+1. **Gate 1 — HealingStrategy**: 30s cooldown, max 10 attempts per 10-minute window
+2. **Gate 2 — ConsensusEngine**: Conflict guard (blocks concurrent heals on same subsystem) + 51% peer quorum vote
+3. **Gate 3** — `agent.heal()` executes
+
+```
+Event arrives → HealingStrategy → ConsensusEngine → agent.heal()
+                (cooldown/cap)    (quorum voting)    (actual fix)
 ```
 
-### Using the full daemon script
+### Dashboard Endpoints
 
-```bash
-bash aureon_daemon.sh   # installs deps, starts server, runs health check
+```
+GET  /watchdog/health              Full system snapshot
+GET  /watchdog/agents              All monitoring agents
+GET  /watchdog/agents/{id}         Single agent status
+GET  /watchdog/events?n=100        Last N events
+GET  /watchdog/heals               Healing history
+GET  /watchdog/mind                SharedMind global state
+GET  /watchdog/mind/timeline       Event timeline
+GET  /watchdog/mind/shards/{id}    Agent shard data
+POST /watchdog/heal/{id}           Manual heal trigger
 ```
 
 ---
 
-## Running DL\_SYSTEM
+## Multi-Agent Swarm
 
-DL_SYSTEM automates on-chain quest tasks on Galxe and Layer3 to earn rewards.
+Create and coordinate hundreds of trading agents simultaneously:
 
-### 1. Configure credentials in `.env`
+```bash
+# Create 5 agents with different strategies
+curl -X POST http://localhost:8010/agents/batch -d '{
+  "count": 5,
+  "strategy": "arb",
+  "min_profit_usd": 3.0
+}'
 
-```env
-GALXE_EMAIL=your@email.com
-GALXE_PASSWORD=yourpassword
-LAYER3_EMAIL=your@email.com
-LAYER3_PASSWORD=yourpassword
+# Start all agents
+curl -X POST http://localhost:8010/swarm/start
+
+# Get consensus signal
+curl http://localhost:8010/swarm/consensus
+
+# Get swarm-wide metrics
+curl http://localhost:8010/swarm/metrics
 ```
 
-### 2. Add tasks to state file
+---
 
-Create `DL_SYSTEM/data/state.json`:
+## API Reference
 
-```json
-{
-  "tasks": [
-    {
-      "id": "galxe-daily-1",
-      "name": "Galxe Daily Quest",
-      "type": "galxe"
-    },
-    {
-      "id": "layer3-daily-1",
-      "name": "Layer3 Daily Quest",
-      "type": "layer3"
-    }
-  ]
-}
-```
+### System
 
-### 3. Run
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | System identity & version |
+| `GET` | `/health` | Full health check + watchdog status |
+| `GET` | `/status` | Agent loop state + watchdog online |
+| `GET` | `/strategies` | Available trading strategies |
+| `GET` | `/chains` | Supported blockchains |
+| `GET` | `/tokens` | Supported tokens |
+
+### Agent Lifecycle
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/agents` | Create a new trading agent |
+| `GET` | `/agents` | List all agents |
+| `GET` | `/agents/{id}` | Get agent details |
+| `PATCH` | `/agents/{id}` | Update config (profit, interval, dry_run) |
+| `DELETE` | `/agents/{id}` | Remove agent |
+| `POST` | `/agents/{id}/start` | Start agent trading loop |
+| `POST` | `/agents/{id}/stop` | Stop agent |
+| `POST` | `/agents/{id}/reset` | Reset to idle |
+| `GET` | `/agents/{id}/performance` | P&L, ROI, metrics |
+| `POST` | `/agents/batch` | Create up to 10 agents |
+
+### Swarm
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/swarm/consensus` | Aggregate signal across all agents |
+| `GET` | `/swarm/metrics` | Swarm-wide P&L and agent counts |
+| `POST` | `/swarm/start` | Start all idle agents |
+| `POST` | `/swarm/stop` | Stop all running agents |
+
+### Memory & Registry
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/memory/{agent_id}` | List all memory entries |
+| `GET` | `/memory/{agent_id}/{key}` | Read single entry |
+| `DELETE` | `/memory/{agent_id}/{key}` | Delete entry |
+| `DELETE` | `/memory/{agent_id}` | Clear all agent memory |
+| `POST` | `/registry/save` | Persist agent snapshots |
+| `POST` | `/registry/load` | Restore agents from snapshot |
+
+### Wallet
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/wallet/generate` | Generate fresh Ethereum wallet |
+
+### Legacy
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/aureon/start` | Start legacy trading loop |
+| `POST` | `/aureon/stop` | Stop legacy trading loop |
+
+---
+
+## Running DL_SYSTEM
+
+DL_SYSTEM automates Web3 quests and airdrops on Galxe and Layer3:
 
 ```bash
 python DL_SYSTEM/main.py
 ```
 
-Runs every 10 minutes. Logs written to `DL_SYSTEM/logs/logs.json`.
+Runs in a background thread with 10-minute cycles. Requires `GALXE_EMAIL`, `GALXE_PASSWORD`, `LAYER3_EMAIL`, `LAYER3_PASSWORD` in `.env`.
+
+---
+
+## Smart Contracts
+
+### Compile
+
+```bash
+python build.py --sol
+# Output: build/solidity/FlashLoanArbitrage.abi + FlashLoanArbitrage.bin
+```
+
+### Deploy
+
+```bash
+python compiler.py --deploy-only
+```
+
+Requires `RPC_URL`, `PRIVATE_KEY`, and `PROFIT_WALLET` in `.env`.
+
+### Contracts
+
+| Contract | Purpose |
+|----------|---------|
+| `FlashLoanArbitrage.sol` | Multi-DEX flash loan arbitrage executor (Aave V3 → Uniswap/SushiSwap/Curve/Balancer) |
+| `NexusFlashReceiver.sol` | Alternative Aave V3 flash loan receiver |
+
+### Supported Flash Loan Pools
+
+| Network | Pool Address |
+|---------|-------------|
+| Ethereum Mainnet | `0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2` |
+| Sepolia Testnet | `0x6Ae43d3271ff6888e7Fc43Fd7321a503ff738951` |
+
+---
+
+## Rust Sidecars
+
+Two high-performance Rust services run alongside the Python core:
+
+### dex-oracle (Port 9001)
+
+Real-time parallel DEX price feeds:
+
+```bash
+./dex-oracle/target/release/dex-oracle
+# GET http://localhost:9001/price/ETH
+# GET http://localhost:9001/prices
+```
+
+Built with: `tokio`, `axum`, `alloy` (Ethereum), `reqwest`
+
+### tx-engine (Port 9002)
+
+EIP-1559 transaction signing and broadcasting:
+
+```bash
+./tx-engine/target/release/tx-engine
+# POST http://localhost:9002/sign
+# POST http://localhost:9002/broadcast
+```
+
+Built with: `tokio`, `axum`, `alloy` (with signers), `serde_json`
+
+### Build Rust Sidecars
+
+```bash
+python build.py --rust
+# or manually:
+cd dex-oracle && cargo build --release
+cd tx-engine  && cargo build --release
+```
+
+Both compile with: `opt-level=3`, fat LTO, single codegen unit, `panic=abort`, stripped binaries.
+
+---
+
+## Docker Deployment
+
+### Build Images
+
+```bash
+# API server
+docker build --target api -t aureon-api .
+
+# Trading bot
+docker build --target bot -t aureon-bot .
+```
+
+### Run API Server
+
+```bash
+docker run -d \
+  --env-file .env \
+  -p 8010:8010 \
+  --name aureon-api \
+  aureon-api
+```
+
+### Run Trading Bot
+
+```bash
+docker run -d \
+  --env-file .env \
+  -e TRADE_MODE=paper \
+  --name aureon-bot \
+  aureon-bot
+```
+
+### Docker Stages
+
+| Stage | Base | Purpose |
+|-------|------|---------|
+| `base` | python:3.11-slim | System deps (gcc, libssl-dev, libffi-dev) |
+| `deps` | base | `pip install -r requirements.txt` (cached) |
+| `test` | deps | `pytest --tb=short -q` |
+| `api` | deps | FastAPI server, port 8010, healthcheck |
+| `bot` | deps | Trading daemon (paper or live) |
 
 ---
 
 ## Module Reference
 
-### `setup_wallet.py`
+### engine/
 
-```bash
-python setup_wallet.py    # interactive: generate or import wallet
-```
+| Module | Purpose |
+|--------|---------|
+| `market_data.py` | ETH/USD from CoinGecko with TTL cache |
+| `portfolio.py` | Balance, P&L, trade history (Cython optimised) |
+| `risk_manager.py` | Daily caps, position sizing (Cython optimised) |
+| `price_cache.py` | Thread-safe TTL price cache singleton |
+| `arbitrage/arbitrage_scanner.py` | Cross-DEX spread detection |
+| `dex/uniswap_v3.py` | On-chain Uniswap V3 quoter |
+| `dex/sushiswap.py` | SushiSwap router interface |
+| `dex/liquidity_monitor.py` | DEX liquidity price aggregator |
+| `execution/executor.py` | Paper trade simulator |
+| `execution/swap_executor.py` | Live Uniswap V3 EIP-1559 swaps |
+| `execution/web3_executor.py` | Raw ETH transfer executor |
+| `strategies/mean_reversion.py` | Statistical signal generator (Cython) |
 
-Saves to `vault/wallet.json`, patches `.env`.
+### intelligence/
 
----
+| Module | Purpose |
+|--------|---------|
+| `trading_agent.py` | Agent definitions, multi-strategy registry |
+| `autonomy.py` | Autonomous trading loop core |
+| `memory.py` | Async SQLite key-value agent memory |
+| `swarm.py` | Multi-agent coordinator & consensus |
+| `alchemy_client.py` | Enhanced Alchemy RPC client |
 
-### `engine/market_data.py`
+### nexus_arb/
 
-```python
-from engine.market_data import MarketData
-price = MarketData().get_price()   # float — live ETH/USD from CoinGecko
-```
-
----
-
-### `engine/portfolio.py`
-
-```python
-from engine.portfolio import Portfolio
-
-p = Portfolio(initial_usd=10000.0)
-p.buy(price=3400.0, amount=0.05)
-p.sell(price=3450.0, amount=0.05)
-p.log_trade("BUY", 3400.0, 0.05, tx_hash="0xabc...")
-
-print(p.summary())
-# {'balance_usd': 9830.0, 'balance_eth': 0.05,
-#  'pnl_usd': +2.50, 'pnl_pct': 0.025, 'trade_count': 1}
-
-p.save_trade_log()   # → vault/trade_log.json
-```
-
----
-
-### `engine/arbitrage/arbitrage_scanner.py`
-
-```python
-from engine.arbitrage.arbitrage_scanner import ArbitrageScanner
-
-# On-chain mode (reads live DEX prices)
-arb = ArbitrageScanner(rpc_url="https://eth-mainnet.g.alchemy.com/v2/KEY")
-
-# Simulation mode (no RPC needed — uses CoinGecko + noise)
-arb = ArbitrageScanner()
-
-opportunities = arb.scan()
-if opportunities:
-    opp = opportunities[0]
-    # opp = {
-    #   'buy_on': 'sushiswap',    'buy_price': 3402.80,
-    #   'sell_on': 'uniswap_v3',  'sell_price': 3412.50,
-    #   'spread_pct': 0.285,      'est_profit_pct': -0.315
-    # }
-```
-
----
-
-### `engine/execution/swap_executor.py`
-
-```python
-from vault.wallet_config import WalletConfig
-from engine.execution.swap_executor import SwapExecutor
-
-wallet   = WalletConfig(private_key="0x...", rpc_url="https://...")
-executor = SwapExecutor(wallet, rpc_url)
-
-# Sell ETH → USDC on Uniswap V3 (live mainnet)
-tx_hash = executor.swap_eth_to_usdc(
-    amount_eth=0.05,
-    slippage=0.005,           # 0.5 % max slippage
-    expected_usdc=170.13      # quote from UniswapV3.get_best_eth_price()
-)
-
-# Buy ETH ← USDC
-tx_hash = executor.swap_usdc_to_eth(amount_usdc=170.0, slippage=0.005)
-
-# Estimate gas cost in USD before trading
-gas_usd = executor.estimate_gas_usd()
-```
-
----
-
-### `engine/dex/uniswap_v3.py`
-
-```python
-from engine.dex.uniswap_v3 import UniswapV3
-
-uni   = UniswapV3(rpc_url="https://...")
-price = uni.get_best_eth_price()   # best price across all fee tiers
-price = uni.get_eth_price_usdc(fee=500)   # specific 0.05% pool
-```
-
----
-
-### `engine/dex/sushiswap.py`
-
-```python
-from engine.dex.sushiswap import SushiSwap
-
-sushi = SushiSwap(rpc_url="https://...")
-price = sushi.get_eth_price_usdc()
-```
-
----
-
-### `intelligence/memory.py`
-
-```python
-import asyncio
-from intelligence.memory import memory
-
-async def main():
-    await memory.init_db()
-    await memory.store("agent1", "last_price", "3412.50")
-    val = await memory.retrieve("agent1", "last_price")   # → "3412.50"
-
-asyncio.run(main())
-```
-
----
-
-### `vault/wallet_config.py`
-
-```python
-from vault.wallet_config import WalletConfig
-
-wallet = WalletConfig(private_key="0x...", rpc_url="https://...")
-print(wallet.address)          # 0xYourAddress
-print(wallet.is_connected())   # True / False
-```
+| Module | Algorithm |
+|--------|-----------|
+| `bellman_ford.py` | Negative-cycle detection for multi-hop arb |
+| `ppo_agent.py` | Proximal Policy Optimisation (actor-critic RL) |
+| `cma_es.py` | Covariance Matrix Adaptation Evolution Strategy |
+| `thompson_sampling.py` | Thompson Sampling multi-armed bandit |
+| `kalman_filter.py` | Unscented Kalman Filter for price smoothing |
 
 ---
 
 ## Security Checklist
 
-Before trading with real funds:
-
-- [ ] `vault/wallet.json` has `chmod 600` — verify with `ls -la vault/`
-- [ ] `.env` is listed in `.gitignore` — verify with `git check-ignore -v .env`
-- [ ] Private key has **not** been committed to git — check `git log --all -p | grep PRIVATE_KEY`
-- [ ] `RPC_URL` points to **Ethereum mainnet** — not a testnet
-- [ ] `TRADE_SIZE_ETH` is set small (start with `0.01`)
-- [ ] `GAS_BUDGET_USD` prevents runaway gas spend
-- [ ] `MAX_DAILY_TRADES` caps total exposure per day
-- [ ] Tested in paper mode for at least a few hours with no errors
-- [ ] Wallet has enough ETH for `TRADE_SIZE_ETH` + gas (min ~0.01 ETH for gas)
+- [ ] `vault/wallet.json` is in `.gitignore` (never commit private keys)
+- [ ] `chmod 600 .env vault/wallet.json` — restrict file permissions
+- [ ] Use a **dedicated trading wallet** — never use your main wallet
+- [ ] Test on **Sepolia testnet** before mainnet
+- [ ] Set `DRY_RUN=true` until profitable in paper mode
+- [ ] Set conservative `MAX_DAILY_TRADES` and `MAX_POSITION_USD`
+- [ ] Rotate API keys regularly (Alchemy, Infura)
+- [ ] Run `python scripts/lint_alignment.py` before every deploy
+- [ ] Never expose `PRIVATE_KEY` in logs, API responses, or error messages
 
 ---
 
 ## Troubleshooting
 
-**`ModuleNotFoundError: No module named 'web3'`**
+### Import errors on startup
+
 ```bash
-pip install -r requirements.txt
+python build.py        # rebuild Cython extensions
+pip install -r requirements.txt --upgrade
 ```
 
-**`Web3 connection failed`**
-- Verify `RPC_URL` in `.env` is a valid Alchemy/Infura HTTPS endpoint
-- Test: `python -c "from web3 import Web3; w=Web3(Web3.HTTPProvider('YOUR_RPC')); print(w.is_connected())"`
+### RPC connection refused
 
-**`PRIVATE_KEY not set` or `vault/wallet.json not found`**
+Check `RPC_URL` in `.env`. Test with:
 ```bash
-python setup_wallet.py
+python -c "from vault.wallet_config import w3; print(w3.is_connected())"
 ```
 
-**Uniswap/SushiSwap prices return `None`**
-- Confirm RPC supports `eth_call` (all Alchemy/Infura tiers do)
-- The system automatically falls back to CoinGecko if on-chain quotes fail
+### Watchdog not starting
 
-**`No module named 'agents'` in DL_SYSTEM**
 ```bash
-# Run from project root, not from inside DL_SYSTEM/
-python DL_SYSTEM/main.py    # correct
+pip install psutil aiosqlite
 ```
 
-**Port 8010 already in use**
+### Rust sidecar build fails
+
 ```bash
-lsof -ti:8010 | xargs kill -9
-uvicorn main:app --host 0.0.0.0 --port 8010
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+python build.py --rust
+```
+
+### Solidity compilation fails
+
+```bash
+python -c "import solcx; solcx.install_solc('0.8.20')"
+python build.py --sol
+```
+
+### Tests failing offline
+
+```bash
+AUREON_ENV=test pytest tests/ -q    # skips mainnet/integration tests
 ```
 
 ---
 
 ## Project Status
 
-| Component | Status |
-|---|---|
-| Wallet setup (generate / import / patch .env) | Complete |
-| Market data — CoinGecko live price | Complete |
-| On-chain price quotes — Uniswap V3 Quoter | Complete |
-| On-chain price quotes — SushiSwap Router | Complete |
-| Cross-DEX arbitrage scanner (live + simulation) | Complete |
-| Mean-reversion strategy | Complete |
-| Risk manager (trade limits + gas budget) | Complete |
-| Paper trading engine | Complete |
-| Live swap execution — Uniswap V3 SwapRouter | Complete |
-| Portfolio tracking + P&L + trade log | Complete |
-| FastAPI cognitive agent server | Complete |
-| Async SQLite memory | Complete |
-| Autonomous agent loop (API-controlled) | Complete |
-| DL_SYSTEM quest automation (Galxe, Layer3) | Complete |
-| Flash loan arbitrage | Framework only — requires deployed smart contract |
+| Component | Status | Notes |
+|-----------|--------|-------|
+| FastAPI server | Production | 40+ endpoints, v3.0 |
+| Paper trading | Production | Full simulation with P&L tracking |
+| Live trading | Beta | Mainnet tested, use with caution |
+| Flash loan arb | Beta | Aave V3 + Uniswap V3 / Curve / Balancer |
+| Multi-agent swarm | Production | Swarm coordination + consensus |
+| Watchdog self-healing | Production | 6 agents, SharedMind consensus, 44 tests |
+| Cython extensions | Production | portfolio, risk_manager, mean_reversion |
+| Rust dex-oracle | Production | Compiled, 6.9 MB binary |
+| Rust tx-engine | Production | Compiled, 6.6 MB binary |
+| Smart contracts | Beta | Compiled ABI + bytecode, deploy-ready |
+| DL_SYSTEM quests | Beta | Galxe + Layer3 automation |
+| CI/CD pipelines | Production | pyflakes, clippy, solhint, CodeQL |
+| Docker build | Production | Multi-stage, healthcheck |
+| Test suite | Production | 44 watchdog tests, offline-safe |
 
 ---
 
 ## License
 
-**Proprietary — All Rights Reserved © Darcel King**
-
-This software is not free or open-source and is not licensed for use, copying,
-modification, or redistribution without the express written permission of Darcel
-King. See [LICENSE](LICENSE) for full terms.
+Proprietary — © Darcel King. All rights reserved.
+Unauthorised use, reproduction, or distribution is strictly prohibited.
