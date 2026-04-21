@@ -86,11 +86,12 @@ tx = pool.functions.flashLoan(
     b"",                    # params
     0,                      # referralCode
 ).build_transaction({
-    "from": wallet.account.address,
-    "nonce": w3.eth.get_transaction_count(wallet.account.address),
-    "gas": 500_000,
-    "gasPrice": w3.eth.gas_price,
-    "chainId": w3.eth.chain_id,
+    "from":                 wallet.account.address,
+    "nonce":                w3.eth.get_transaction_count(wallet.account.address),
+    "gas":                  500_000,
+    "maxFeePerGas":         w3.to_wei(100, "gwei"),
+    "maxPriorityFeePerGas": w3.to_wei(2,   "gwei"),
+    "chainId":              w3.eth.chain_id,
 })
 
 # --- Sign transaction ---

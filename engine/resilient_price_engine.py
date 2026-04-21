@@ -227,18 +227,23 @@ class ResilientPriceEngine:
             self._cb_python.record_failure()
         return None
 
-    def _ensure_dex_clients(self):
+    def _ensure_dex_clients(self) -> None:
         """Lazy-import DEX clients only when the Python fallback is needed."""
         if self._uni is None and self._sushi is None:
+            rpc = os.getenv("RPC_URL") or os.getenv("ETH_RPC", "")
+            if not rpc:
+                logger.debug("No RPC_URL — Python DEX path unavailable")
+                return
+
             try:
                 from engine.dex.uniswap_v3 import UniswapV3
-                self._uni = UniswapV3()
+                self._uni = UniswapV3(rpc)
             except Exception as exc:
                 logger.debug("UniswapV3 client unavailable: %s", exc)
 
             try:
                 from engine.dex.sushiswap import SushiSwap
-                self._sushi = SushiSwap()
+                self._sushi = SushiSwap(rpc)
             except Exception as exc:
                 logger.debug("SushiSwap client unavailable: %s", exc)
 

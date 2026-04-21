@@ -50,8 +50,6 @@ from typing import Optional
 import math
 import numpy as np
 
-import math
-
 
 @dataclass
 class UKFState:

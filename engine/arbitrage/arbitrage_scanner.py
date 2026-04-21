@@ -68,13 +68,13 @@ class ArbitrageScanner:
                 self._sushi = SushiSwap(rpc)
                 if not self._uni.is_connected():
                     raise ConnectionError("Uniswap RPC not reachable")
-                print("[ArbitrageScanner] On-chain mode (Uniswap V3 + SushiSwap)")
+                logger.info("On-chain mode (Uniswap V3 + SushiSwap)")
             except Exception as exc:
-                print(f"[ArbitrageScanner] On-chain init failed ({exc}), using simulation")
+                logger.warning("On-chain init failed (%s), using simulation", exc)
                 self._uni   = None
                 self._sushi = None
         else:
-            print("[ArbitrageScanner] No RPC_URL — using simulation mode")
+            logger.info("No RPC_URL — using simulation mode")
 
     # ── price helpers ─────────────────────────────────────────────────────────
 

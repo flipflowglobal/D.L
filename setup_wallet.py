@@ -24,7 +24,7 @@ ENV_FILE = os.path.join(os.path.dirname(__file__), ".env")
 
 def _save_wallet(address: str, private_key: str) -> None:
     os.makedirs(VAULT_DIR, exist_ok=True)
-    with open(WALLET_FILE, "w") as f:
+    with open(WALLET_FILE, "w", encoding="utf-8") as f:
         json.dump({"address": address, "private_key": private_key}, f, indent=2)
     os.chmod(WALLET_FILE, 0o600)
     print(f"  Wallet saved  → {WALLET_FILE}")
@@ -33,9 +33,9 @@ def _save_wallet(address: str, private_key: str) -> None:
 def _patch_env(address: str, private_key: str) -> None:
     """Write / overwrite WALLET_ADDRESS and PRIVATE_KEY in .env."""
     if not os.path.exists(ENV_FILE):
-        open(ENV_FILE, "w").close()
+        open(ENV_FILE, "w", encoding="utf-8").close()
 
-    with open(ENV_FILE) as f:
+    with open(ENV_FILE, encoding="utf-8") as f:
         lines = f.readlines()
 
     updated = {"WALLET_ADDRESS": False, "PRIVATE_KEY": False}
@@ -56,7 +56,7 @@ def _patch_env(address: str, private_key: str) -> None:
     if not updated["PRIVATE_KEY"]:
         new_lines.append(f"PRIVATE_KEY={private_key}\n")
 
-    with open(ENV_FILE, "w") as f:
+    with open(ENV_FILE, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
 
     print("  .env patched  → WALLET_ADDRESS + PRIVATE_KEY updated")
@@ -125,7 +125,7 @@ def main() -> None:
     print()
 
     if os.path.exists(WALLET_FILE):
-        with open(WALLET_FILE) as f:
+        with open(WALLET_FILE, encoding="utf-8") as f:
             existing = json.load(f)
         print(f"  Existing wallet found: {existing['address']}")
         choice = input("  Overwrite? [y/N]: ").strip().lower()

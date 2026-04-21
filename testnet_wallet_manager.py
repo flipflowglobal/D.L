@@ -5,6 +5,8 @@ Reads wallet credentials from environment variables or vault/wallet.json.
 Run `python setup_wallet.py` first to initialise the vault.
 """
 
+from __future__ import annotations
+
 import json
 import os
 
@@ -19,7 +21,7 @@ WALLET_FILE = os.path.join(os.path.dirname(__file__), "vault", "wallet.json")
 def load_wallet() -> dict:
     """Load wallet from vault file, falling back to environment variables."""
     if os.path.exists(WALLET_FILE):
-        with open(WALLET_FILE) as f:
+        with open(WALLET_FILE, encoding="utf-8") as f:
             return json.load(f)
 
     address = os.getenv("WALLET_ADDRESS")
@@ -42,12 +44,14 @@ def send_transaction(to_address: str, amount_eth: float, rpc_url: str) -> str:
     wallet = load_wallet()
     nonce = w3.eth.get_transaction_count(wallet["address"])
     tx = {
-        "nonce": nonce,
-        "to": to_address,
-        "value": w3.to_wei(amount_eth, "ether"),
-        "gas": 21000,
-        "gasPrice": w3.eth.gas_price,
-        "chainId": w3.eth.chain_id,
+        "type":                 "0x2",
+        "nonce":                nonce,
+        "to":                   Web3.to_checksum_address(to_address),
+        "value":                w3.to_wei(amount_eth, "ether"),
+        "gas":                  21_000,
+        "maxFeePerGas":         w3.to_wei(100, "gwei"),
+        "maxPriorityFeePerGas": w3.to_wei(2,   "gwei"),
+        "chainId":              w3.eth.chain_id,
     }
     signed = w3.eth.account.sign_transaction(tx, wallet["private_key"])
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)

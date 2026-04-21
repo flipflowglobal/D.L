@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
-# send_testnet_tx.py
+"""
+send_testnet_tx.py — Send a small test ETH transfer via Web3Executor.
+
+Reads PRIVATE_KEY, RPC_URL, TEST_RECIPIENT, and TEST_AMOUNT_ETH from .env.
+"""
+
+from __future__ import annotations
+
+import os
 
 from dotenv import load_dotenv
-import os
 
 from vault.wallet_config import WalletConfig
 from engine.execution.web3_executor import Web3Executor
@@ -24,8 +31,8 @@ def main():
             "  TEST_RECIPIENT=0xYourRecipientAddress"
         )
 
-    # Amount to send
-    AMOUNT_ETH = 0.01
+    # Amount to send (configurable via TEST_AMOUNT_ETH in .env)
+    AMOUNT_ETH = float(os.getenv("TEST_AMOUNT_ETH", "0.01"))
 
     print("Loading wallet...")
 
