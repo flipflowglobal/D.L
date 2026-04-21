@@ -1,0 +1,375 @@
+# .github/workflows/copilot-setup-steps.yml
+#
+# Pre-configures the Copilot cloud agent environment:
+#   1. Python 3.11 + ALL dependencies (core, optional, testing, linting,
+#      profiling, security, docs, async tooling)
+#   2. Rust stable + builds Rust sidecars (dex-oracle, tx-engine)
+#   3. Node.js 20 + solc wrapper
+#   4. System tools (sqlite3, jq, httpie, socat, ripgrep, …)
+#   5. Mock API server for DNS-blocked external services
+#      (api.coingecko.com, api.etherscan.io, infura, …)
+#   6. /etc/hosts redirect so those domains resolve to localhost mock
+#   7. Environment variables for offline/CI test mode
+#   8. Playwright browsers for DL_SYSTEM quest tasks
+#   9. End-to-end validation that the full test suite passes
+
+name: "Copilot Setup Steps"
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history — Copilot can roll back commits
+
+      # ── 2. Python toolchain ────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Upgrade pip and install build tools
+        run: python -m pip install --upgrade pip wheel setuptools build
+
+      # ── 3. Core dependencies ───────────────────────────────────────────────
+      - name: Install project dependencies (core)
+        run: pip install -r requirements.txt
+
+      - name: Install project dependencies (optional)
+        run: pip install -r requirements-optional.txt || true
+
+      # ── 4. Extended testing + quality tools ────────────────────────────────
+      - name: Install testing tools
+        run: |
+          pip install \
+            pytest>=8.0 \
+            pytest-asyncio>=0.23 \
+            pytest-cov>=4.1 \
+            pytest-mock>=3.12 \
+            pytest-httpx>=0.28 \
+            pytest-timeout>=2.2 \
+            pytest-xdist>=3.5 \
+            pytest-randomly>=3.15 \
+            anyio>=4.0 \
+            responses>=0.25 \
+            httpretty>=1.1
+
+      - name: Install linting and static-analysis tools
+        run: |
+          pip install \
+            pyflakes>=3.2 \
+            ruff>=0.3 \
+            black>=24.0 \
+            isort>=5.13 \
+            mypy>=1.9 \
+            pylint>=3.1 \
+            flake8>=7.0 \
+            flake8-bugbear>=24.0 \
+            pyupgrade>=3.15 \
+            autoflake>=2.3 \
+            bandit>=1.7 \
+            safety>=3.1
+
+      - name: Install debugging and profiling tools
+        run: |
+          pip install \
+            ipdb>=0.13 \
+            line-profiler>=4.1 \
+            memory-profiler>=0.61 \
+            scalene>=1.5 || true
+
+      - name: Install documentation tools
+        run: |
+          pip install pdoc>=14.0 || true
+
+      # ── 5. Solidity compiler ───────────────────────────────────────────────
+      - name: Install Solidity compiler (solc 0.8.20)
+        run: |
+          python -c "
+          import solcx
+          solcx.install_solc('0.8.20')
+          print('solc 0.8.20 installed')
+          "
+
+      # ── 6. Rust toolchain + build sidecars ─────────────────────────────────
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            dex-oracle/target
+            tx-engine/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build Rust sidecars (best-effort)
+        run: |
+          for dir in dex-oracle tx-engine; do
+            if [ -f "$dir/Cargo.toml" ]; then
+              echo "==> Building $dir"
+              cargo build --release --manifest-path "$dir/Cargo.toml" \
+                || echo "WARN: $dir build failed — continuing"
+            else
+              echo "==> $dir not present — skipping"
+            fi
+          done
+
+      # ── 7. Node.js 20 ──────────────────────────────────────────────────────
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # ── 8. System packages ─────────────────────────────────────────────────
+      - name: Install system packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            sqlite3 \
+            jq \
+            curl \
+            httpie \
+            socat \
+            netcat-openbsd \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            libffi-dev \
+            ripgrep \
+            fd-find \
+            tree \
+            xxd \
+            strace
+
+      # ── 9. Mock server for DNS-blocked external APIs ───────────────────────
+      #
+      # Copilot's integrated firewall blocks connections to third-party APIs.
+      # We solve this in two layers:
+      #   a) A lightweight Python HTTP server on :8099 that returns plausible
+      #      mock responses for CoinGecko, Etherscan, Infura, etc.
+      #   b) /etc/hosts entries routing those domains to 127.0.0.1 so OS DNS
+      #      resolution returns our mock server's address.
+      #
+      # For HTTPS: requests will fail SSL verification against our plain HTTP
+      # server, so we also set COINGECKO_BASE_URL=http://localhost:8099 and
+      # patch MarketData.COINGECKO_URL in conftest.py so no HTTPS attempt
+      # is made.  The /etc/hosts redirect handles any code that constructs
+      # the URL itself.
+
+      - name: Start local API mock server
+        run: |
+          cat > /tmp/mock_api_server.py << 'PYEOF'
+          """
+          Minimal mock for external APIs blocked by Copilot's firewall.
+          Runs on 127.0.0.1:8099 (HTTP).
+          Handles CoinGecko, Etherscan, Infura, Binance, Kraken shapes.
+          """
+          import json, threading, time
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+          from urllib.parse import urlparse, parse_qs
+
+          ETH_USD = 2000.0
+
+          RESPONSES = {
+              "/api/v3/simple/price":   {"ethereum": {"usd": ETH_USD}, "bitcoin": {"usd": 60000.0}},
+              "/api/v3/coins/markets":  [{"id": "ethereum", "current_price": ETH_USD}],
+              "/api":                   {"status": "1", "result": str(ETH_USD)},   # etherscan
+              "/v1/brokerage/ticker":   {"price": str(ETH_USD)},                    # coinbase
+              "/api/v3/ticker/price":   {"symbol": "ETHUSDT", "price": str(ETH_USD)},  # binance
+              "/0/public/Ticker":       {"result": {"XETHZUSD": {"c": [str(ETH_USD), "1.0"]}}},
+          }
+
+          class MockHandler(BaseHTTPRequestHandler):
+              def log_message(self, *a): pass   # suppress access log noise
+
+              def do_GET(self):
+                  path = urlparse(self.path).path
+                  # Match on path prefix
+                  body = None
+                  for prefix, data in RESPONSES.items():
+                      if path.startswith(prefix):
+                          body = json.dumps(data).encode()
+                          break
+                  if body is None:
+                      body = json.dumps({"status": "ok", "mock": True, "path": path}).encode()
+
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def do_POST(self):
+                  length = int(self.headers.get("Content-Length", 0))
+                  _ = self.rfile.read(length)
+                  body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": "0x1"}).encode()
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+          server = HTTPServer(("127.0.0.1", 8099), MockHandler)
+          t = threading.Thread(target=server.serve_forever, daemon=True)
+          t.start()
+          print("Mock API server running on http://127.0.0.1:8099")
+          # Keep process alive until killed by GitHub Actions cleanup
+          while True:
+              time.sleep(60)
+          PYEOF
+
+          nohup python /tmp/mock_api_server.py >>/tmp/mock_api.log 2>&1 &
+          echo "MOCK_API_PID=$!" >> "$GITHUB_ENV"
+          sleep 1
+          # Verify it started
+          curl -sf http://127.0.0.1:8099/api/v3/simple/price | jq .ethereum.usd
+
+      - name: Redirect blocked external API domains to mock server
+        run: |
+          # CoinGecko
+          echo "127.0.0.1  api.coingecko.com"           | sudo tee -a /etc/hosts
+          echo "127.0.0.1  pro-api.coingecko.com"        | sudo tee -a /etc/hosts
+          # CoinMarketCap
+          echo "127.0.0.1  pro-api.coinmarketcap.com"    | sudo tee -a /etc/hosts
+          echo "127.0.0.1  sandbox-api.coinmarketcap.com"| sudo tee -a /etc/hosts
+          # Binance
+          echo "127.0.0.1  api.binance.com"              | sudo tee -a /etc/hosts
+          echo "127.0.0.1  api.binance.us"               | sudo tee -a /etc/hosts
+          # Kraken
+          echo "127.0.0.1  api.kraken.com"               | sudo tee -a /etc/hosts
+          # Etherscan
+          echo "127.0.0.1  api.etherscan.io"             | sudo tee -a /etc/hosts
+          echo "127.0.0.1  api-sepolia.etherscan.io"     | sudo tee -a /etc/hosts
+          echo "127.0.0.1  api-goerli.etherscan.io"      | sudo tee -a /etc/hosts
+          # Infura / Alchemy
+          echo "127.0.0.1  mainnet.infura.io"            | sudo tee -a /etc/hosts
+          echo "127.0.0.1  sepolia.infura.io"            | sudo tee -a /etc/hosts
+          echo "127.0.0.1  polygon-mainnet.infura.io"    | sudo tee -a /etc/hosts
+          echo "127.0.0.1  eth-mainnet.g.alchemy.com"   | sudo tee -a /etc/hosts
+          echo "127.0.0.1  eth-sepolia.g.alchemy.com"   | sudo tee -a /etc/hosts
+          # Coinbase
+          echo "127.0.0.1  api.coinbase.com"             | sudo tee -a /etc/hosts
+          echo "127.0.0.1  api.pro.coinbase.com"         | sudo tee -a /etc/hosts
+          # Uniswap / Sushiswap subgraphs
+          echo "127.0.0.1  api.thegraph.com"             | sudo tee -a /etc/hosts
+          echo "127.0.0.1  gateway.thegraph.com"         | sudo tee -a /etc/hosts
+          echo "MOCK_HOSTS_ADDED=true" >> "$GITHUB_ENV"
+
+      # ── 10. Environment variables ──────────────────────────────────────────
+      - name: Export CI environment variables
+        run: |
+          {
+            # Python / test runner
+            echo "PYTHONDONTWRITEBYTECODE=1"
+            echo "PYTHONUNBUFFERED=1"
+            echo "PYTEST_ASYNCIO_MODE=auto"
+
+            # Mock endpoints — code that respects these will never hit real APIs
+            echo "COINGECKO_BASE_URL=http://127.0.0.1:8099"
+            echo "COINMARKETCAP_BASE_URL=http://127.0.0.1:8099"
+            echo "ETHERSCAN_API_URL=http://127.0.0.1:8099/api"
+            echo "RPC_URL=http://127.0.0.1:8099"
+
+            # Disable live trading everywhere
+            echo "DRY_RUN=true"
+            echo "PAPER_TRADING=true"
+            echo "AUREON_ENV=test"
+
+            # Fall back to known safe price
+            echo "FALLBACK_ETH_PRICE=2000.0"
+
+            # Suppress deprecation noise
+            echo "PYTHONWARNINGS=ignore::DeprecationWarning"
+          } >> "$GITHUB_ENV"
+
+      # ── 11. pytest.ini — extend with timeout + markers ─────────────────────
+      - name: Extend pytest.ini with CI settings
+        run: |
+          # Append CI-specific settings to existing pytest.ini
+          cat >> pytest.ini << 'INI'
+
+          # CI additions (written by copilot-setup-steps)
+          addopts = -q --tb=short --timeout=30 --strict-markers
+          timeout = 30
+          markers =
+              mainnet: live mainnet test — requires RPC_URL and PRIVATE_KEY
+              slow: test takes more than 5 s
+              integration: requires external services
+          INI
+
+      # ── 12. Playwright browsers (for DL_SYSTEM quest tasks) ───────────────
+      - name: Install Playwright browsers
+        run: |
+          python -m playwright install chromium --with-deps 2>/dev/null \
+            || echo "WARN: Playwright install failed — browser tasks will be skipped"
+
+      # ── 13. Pre-warm solcx compiler cache ─────────────────────────────────
+      - name: Pre-warm Solidity compiler
+        run: |
+          python -c "
+          try:
+              import solcx
+              solcx.set_solc_version('0.8.20')
+              print('solcx ready, version:', solcx.get_solc_version())
+          except Exception as e:
+              print('solcx warn:', e)
+          "
+
+      # ── 14. Validate: full test suite must pass ────────────────────────────
+      - name: Run full test suite (validates setup)
+        run: |
+          python -m pytest tests/ -q --tb=short --timeout=30
+        env:
+          COINGECKO_BASE_URL: "http://127.0.0.1:8099"
+          RPC_URL: "http://127.0.0.1:8099"
+          DRY_RUN: "true"
+
+      # ── 15. Tool availability summary ─────────────────────────────────────
+      - name: Print tool inventory
+        run: |
+          echo "=== Python ==="
+          python --version
+          echo ""
+          echo "=== Key packages ==="
+          pip show web3 fastapi aiosqlite httpx pytest ruff black mypy bandit \
+            | grep -E "^(Name|Version):" | paste - - | column -t
+          echo ""
+          echo "=== Rust ==="
+          rustc --version && cargo --version
+          echo ""
+          echo "=== Node.js ==="
+          node --version && npm --version
+          echo ""
+          echo "=== System tools ==="
+          which sqlite3 jq curl rg fd socat 2>/dev/null | xargs -I{} sh -c 'echo "{}"'
+          echo ""
+          echo "=== Mock API ==="
+          curl -sf http://127.0.0.1:8099/api/v3/simple/price
+          echo ""
+          echo "=== /etc/hosts (API redirects) ==="
+          grep -E "coingecko|etherscan|infura|alchemy|binance|kraken" /etc/hosts

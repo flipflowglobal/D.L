@@ -30,8 +30,8 @@ class MarketData:
     """
 
     COINGECKO_URL = (
-        "https://api.coingecko.com/api/v3/simple/price"
-        "?ids=ethereum&vs_currencies=usd"
+        os.getenv("COINGECKO_BASE_URL", "https://api.coingecko.com")
+        + "/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
     )
     FALLBACK_PRICE: float = _FALLBACK
 
