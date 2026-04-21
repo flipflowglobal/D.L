@@ -1,148 +1,203 @@
-// SPDX-License-Identifier: LicenseRef-Proprietary
-// Copyright (c) 2026 Darcel King. All rights reserved.
-// Proprietary — see LICENSE in repository root.
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/**
- * @title  NexusFlashReceiver
- * @notice Production-grade Aave V3 flash loan receiver for multi-DEX arbitrage.
- *         Executes atomic swap sequences across Uniswap V3, Curve Finance,
- *         Balancer V2, and Camelot V3.
- *
- * Architecture:
- *   1. Python bot detects arbitrage opportunity off-chain (Bellman-Ford graph)
- *   2. Bot encodes trade route and calls executeArbitrage()
- *   3. Contract borrows asset via Aave V3 flashLoanSimple
- *   4. Aave calls executeOperation() with borrowed funds
- *   5. Contract executes DEX swaps in sequence
- *   6. Contract repays loan + premium, keeps profit
- *   7. Profit sent to owner wallet
- *
- * Supported DEXes:
- *   0 = Uniswap V3
- *   1 = Curve Finance (via Router)
- *   2 = Balancer V2
- *   3 = Camelot V3 (Arbitrum-native fork of Uniswap V3)
- */
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import "./interfaces/IAaveV3Pool.sol";
-import "./interfaces/IFlashLoanSimpleReceiver.sol";
-import "./interfaces/IUniswapV3Router.sol";
-import "./interfaces/ICurvePool.sol";
-import "./interfaces/IBalancerVault.sol";
+// ── Aave V3 ───────────────────────────────────────────────────────────────────
+
+interface IFlashLoanSimpleReceiver {
+    function executeOperation(
+        address asset,
+        uint256 amount,
+        uint256 premium,
+        address initiator,
+        bytes calldata params
+    ) external returns (bool);
+}
+
+interface IAavePool {
+    function flashLoanSimple(
+        address receiverAddress,
+        address asset,
+        uint256 amount,
+        bytes calldata params,
+        uint16 referralCode
+    ) external;
+}
+
+// ── ERC-20 ────────────────────────────────────────────────────────────────────
 
 interface IERC20 {
-    function approve(address spender, uint256 amount) external returns (bool);
-    function transfer(address to, uint256 amount) external returns (bool);
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
     function balanceOf(address account) external view returns (uint256);
-    function allowance(address owner, address spender) external view returns (uint256);
+    function transfer(address to, uint256 amount) external returns (bool);
+    function approve(address spender, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
+
+// ── Uniswap V3 ────────────────────────────────────────────────────────────────
+
+interface IUniswapV3Router {
+    struct ExactInputSingleParams {
+        address tokenIn;
+        address tokenOut;
+        uint24  fee;
+        address recipient;
+        uint256 deadline;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+        uint160 sqrtPriceLimitX96;
+    }
+    function exactInputSingle(ExactInputSingleParams calldata params)
+        external payable returns (uint256 amountOut);
+}
+
+// ── Uniswap / SushiSwap V2-style ──────────────────────────────────────────────
+
+interface IUniswapV2Router {
+    function swapExactTokensForTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
+}
+
+// ── Curve (stable / crypto pools) ────────────────────────────────────────────
+
+interface ICurvePool {
+    // Stable-swap variant  (int128 indices)
+    function exchange(int128 i, int128 j, uint256 dx, uint256 min_dy) external returns (uint256);
+    // Crypto-swap variant  (uint256 indices)
+    function exchange(uint256 i, uint256 j, uint256 dx, uint256 min_dy) external returns (uint256);
+}
+
+// ── Balancer V2 ───────────────────────────────────────────────────────────────
+
+interface IBalancerVault {
+    enum SwapKind { GIVEN_IN, GIVEN_OUT }
+    struct SingleSwap {
+        bytes32 poolId;
+        SwapKind kind;
+        address assetIn;
+        address assetOut;
+        uint256 amount;
+        bytes userData;
+    }
+    struct FundManagement {
+        address sender;
+        bool fromInternalBalance;
+        address payable recipient;
+        bool toInternalBalance;
+    }
+    function swap(
+        SingleSwap calldata singleSwap,
+        FundManagement calldata funds,
+        uint256 limit,
+        uint256 deadline
+    ) external payable returns (uint256 amountCalculated);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  NexusFlashReceiver
+//
+//  Multi-DEX flash-loan arbitrage receiver for Aave V3.
+//  Supports up to 8 sequential swap steps per flash loan, mixing:
+//    • Uniswap V3  (DEX_UNI_V3)
+//    • SushiSwap V2  (DEX_SUSHI_V2)
+//    • Curve stable/crypto  (DEX_CURVE)
+//    • Balancer V2  (DEX_BALANCER)
+//    • Camelot V2 (Arbitrum V2-fork)  (DEX_CAMELOT)
+//
+//  One-call flow (triggered by initiate()):
+//    1. Owner calls initiate(asset, amount, steps, minProfit)
+//    2. Aave lends `amount` of `asset` to this contract
+//    3. executeOperation() runs all swap steps in sequence
+//    4. Net profit check: finalBalance >= amount + premium + minProfit
+//    5. Approve Aave repayment; profit stays in contract
+//    6. Owner calls withdraw() to collect profit
+//
+//  Security:
+//    - onlyOwner and onlyPool guards on all state-changing functions
+//    - Profit floor enforced before repayment approval
+//    - No external calls are made outside of well-known DEX interfaces
+// ═════════════════════════════════════════════════════════════════════════════
 
 contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
 
-    // ─── DEX Type Constants ───────────────────────────────────────────────────
-    uint8 constant DEX_UNISWAP_V3  = 0;
-    uint8 constant DEX_CURVE       = 1;
-    uint8 constant DEX_BALANCER    = 2;
-    uint8 constant DEX_CAMELOT_V3  = 3;
+    // ── DEX type identifiers ──────────────────────────────────────────────────
+    uint8 public constant DEX_UNI_V3    = 0;
+    uint8 public constant DEX_SUSHI_V2  = 1;
+    uint8 public constant DEX_CURVE     = 2;
+    uint8 public constant DEX_BALANCER  = 3;
+    uint8 public constant DEX_CAMELOT   = 4;
 
-    // ─── Immutable Protocol Addresses ─────────────────────────────────────────
-    IAaveV3Pool          public immutable aavePool;
-    IUniswapV3SwapRouter public immutable uniswapRouter;
-    ICurveRouter         public immutable curveRouter;
-    IBalancerVault       public immutable balancerVault;
+    // ── State ─────────────────────────────────────────────────────────────────
+    address public immutable owner;
+    address public immutable aavePool;
 
-    // ─── Mutable State ────────────────────────────────────────────────────────
-    address public owner;
-    address public executor;          // Python bot hot wallet
-    bool    public paused;
-    uint256 public totalProfit;       // Lifetime accumulated profit (token-denominated)
+    // ── Events ────────────────────────────────────────────────────────────────
+    event FlashExecuted(address indexed asset, uint256 borrowed, uint256 profit, uint256 steps);
+    event ProfitWithdrawn(address indexed token, address indexed to, uint256 amount);
 
-    // ─── Events ───────────────────────────────────────────────────────────────
-    event ArbitrageExecuted(
-        address indexed asset,
-        uint256 borrowed,
-        uint256 profit,
-        uint256 gasUsed
-    );
-    event Paused(bool state);
-    event ExecutorUpdated(address newExecutor);
-    event EmergencyWithdraw(address token, uint256 amount);
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    // ── Modifiers ─────────────────────────────────────────────────────────────
+    modifier onlyOwner() {
+        require(msg.sender == owner, "NFR: not owner");
+        _;
+    }
 
-    // ─── Custom Errors ────────────────────────────────────────────────────────
-    error Unauthorized();
-    error ContractPaused();
-    error InvalidCaller();
-    error InsufficientProfit(uint256 repayAmount, uint256 balance);
-    error SwapFailed(uint8 dexType, uint256 step);
-    error ZeroAmount();
+    modifier onlyPool() {
+        require(msg.sender == aavePool, "NFR: not pool");
+        _;
+    }
 
-    // ─── Swap Step Struct ─────────────────────────────────────────────────────
-    /**
-     * @param dexType       DEX identifier (0=UniV3, 1=Curve, 2=Balancer, 3=Camelot)
-     * @param tokenIn       Input token address
-     * @param tokenOut      Output token address
-     * @param amountIn      Exact input (0 = use full contract balance of tokenIn)
-     * @param minAmountOut  Minimum acceptable output (slippage protection)
-     * @param extraData     ABI-encoded DEX-specific parameters
-     */
+    // ── Constructor ───────────────────────────────────────────────────────────
+    constructor(address _aavePool) {
+        require(_aavePool != address(0), "NFR: zero pool");
+        owner    = msg.sender;
+        aavePool = _aavePool;
+    }
+
+    // ── SwapStep encoding ─────────────────────────────────────────────────────
+    //
+    // Each SwapStep is ABI-encoded as:
+    //   (uint8 dex, address router, address tokenIn, address tokenOut,
+    //    uint256 amountOutMin, uint24 fee, bytes32 balancerPoolId,
+    //    int128 curveI, int128 curveJ, uint256 deadline)
+    //
+    // Unused fields should be zero-filled.
+    //
     struct SwapStep {
-        uint8   dexType;
+        uint8   dex;             // DEX_* constant
+        address router;          // router / vault / pool address
         address tokenIn;
         address tokenOut;
-        uint256 amountIn;
-        uint256 minAmountOut;
-        bytes   extraData;
+        uint256 amountOutMin;    // minimum received (slippage guard)
+        uint24  fee;             // Uniswap V3 fee tier (ignored for other DEXes)
+        bytes32 balancerPoolId;  // Balancer pool id (ignored for non-Balancer)
+        int128  curveI;          // Curve token-in index
+        int128  curveJ;          // Curve token-out index
+        uint256 deadline;        // Unix timestamp
     }
 
-    // ─── Constructor ──────────────────────────────────────────────────────────
-    constructor(
-        address _aavePool,
-        address _uniswapRouter,
-        address _curveRouter,
-        address _balancerVault
-    ) {
-        owner         = msg.sender;
-        executor      = msg.sender;
-        aavePool      = IAaveV3Pool(_aavePool);
-        uniswapRouter = IUniswapV3SwapRouter(_uniswapRouter);
-        curveRouter   = ICurveRouter(_curveRouter);
-        balancerVault = IBalancerVault(_balancerVault);
-    }
+    // ── Initiate flash loan ───────────────────────────────────────────────────
 
-    // ─── Access Control Modifiers ─────────────────────────────────────────────
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert Unauthorized();
-        _;
-    }
-
-    modifier onlyExecutor() {
-        if (msg.sender != executor && msg.sender != owner) revert Unauthorized();
-        _;
-    }
-
-    modifier notPaused() {
-        if (paused) revert ContractPaused();
-        _;
-    }
-
-    // ─── Entry Point ──────────────────────────────────────────────────────────
     /**
-     * @notice Initiates a flash loan arbitrage trade.
-     * @param asset     Token to borrow (e.g. WETH, USDC)
-     * @param amount    Amount to borrow in token's native decimals
-     * @param steps     Ordered array of swap steps to execute atomically
+     * @notice Trigger a multi-DEX flash-loan arbitrage.  Only the owner may call.
+     * @param asset      ERC-20 token to borrow (must be Aave-listed)
+     * @param amount     Amount to borrow (token's native decimals)
+     * @param steps      Encoded SwapStep[] (abi.encode(SwapStep[]))
+     * @param minProfit  Minimum net profit required (same decimals as asset)
      */
-    function executeArbitrage(
+    function initiate(
         address asset,
         uint256 amount,
-        SwapStep[] calldata steps
-    ) external onlyExecutor notPaused {
-        if (amount == 0) revert ZeroAmount();
-        bytes memory params = abi.encode(steps);
-        aavePool.flashLoanSimple(
+        bytes calldata steps,
+        uint256 minProfit
+    ) external onlyOwner {
+        // Pack minProfit into params so executeOperation can access it
+        bytes memory params = abi.encode(steps, minProfit);
+        IAavePool(aavePool).flashLoanSimple(
             address(this),
             asset,
             amount,
@@ -151,172 +206,180 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
         );
     }
 
-    // ─── Aave V3 Flash Loan Callback ──────────────────────────────────────────
-    /**
-     * @notice Called by Aave after flash loan is disbursed.
-     *         Executes all swap steps and repays loan + premium.
-     */
+    // ── Aave callback ─────────────────────────────────────────────────────────
+
     function executeOperation(
         address asset,
         uint256 amount,
         uint256 premium,
         address initiator,
         bytes calldata params
-    ) external override returns (bool) {
-        if (msg.sender != address(aavePool)) revert InvalidCaller();
-        if (initiator != address(this))      revert InvalidCaller();
+    using SafeERC20 for IERC20;
 
-        uint256 gasStart = gasleft();
+    ) external override onlyPool returns (bool) {
+        require(initiator == address(this), "NFR: invalid initiator");
 
-        SwapStep[] memory steps = abi.decode(params, (SwapStep[]));
+        (bytes memory stepsEncoded, uint256 minProfit) =
+            abi.decode(params, (bytes, uint256));
+
+        SwapStep[] memory steps = abi.decode(stepsEncoded, (SwapStep[]));
+        require(steps.length > 0, "NFR: empty steps");
+        require(steps.length <= 8, "NFR: too many steps");
+
+        // Track the contract's pre-existing balance separately so profitability
+        // is measured only on the flash-loan operation, in the borrowed asset.
+        uint256 startingAssetBalance = IERC20(asset).balanceOf(address(this)) - amount;
+
+        // Execute each swap step sequentially.
+        // The first step receives `amount` of `asset` as input.
+        uint256 currentAmount = amount;
 
         for (uint256 i = 0; i < steps.length; i++) {
-            _executeSwap(steps[i]);
+            currentAmount = _executeStep(steps[i], currentAmount);
         }
 
-        uint256 repayAmount = amount + premium;
-        uint256 balance     = IERC20(asset).balanceOf(address(this));
+        // ── Profit check ──────────────────────────────────────────────────────
+        uint256 finalAssetBalance = IERC20(asset).balanceOf(address(this));
+        uint256 amountReturned = finalAssetBalance - startingAssetBalance;
+        uint256 repay = amount + premium;
+        require(amountReturned >= repay, "NFR: arb not profitable");
+        uint256 profit = amountReturned - repay;
+        require(profit >= minProfit, "NFR: profit below floor");
 
-        if (balance < repayAmount) {
-            revert InsufficientProfit(repayAmount, balance);
-        }
+        // ── Repay Aave ────────────────────────────────────────────────────────
+        IERC20(asset).forceApprove(aavePool, repay);
+        // Aave pulls repay from this contract; remaining profit stays here.
 
-        uint256 profit = balance - repayAmount;
-
-        _safeApprove(asset, address(aavePool), repayAmount);
-
-        if (profit > 0) {
-            IERC20(asset).transfer(owner, profit);
-            totalProfit += profit;
-        }
-
-        emit ArbitrageExecuted(asset, amount, profit, gasStart - gasleft());
+        emit FlashExecuted(asset, amount, profit, steps.length);
         return true;
     }
 
-    // ─── Internal Swap Dispatcher ─────────────────────────────────────────────
-    function _executeSwap(SwapStep memory step) internal {
-        uint256 amountIn = step.amountIn == 0
-            ? IERC20(step.tokenIn).balanceOf(address(this))
-            : step.amountIn;
+    // ── Internal: dispatch swap by DEX type ───────────────────────────────────
 
-        if (step.dexType == DEX_UNISWAP_V3 || step.dexType == DEX_CAMELOT_V3) {
-            _swapUniswapV3(step, amountIn);
-        } else if (step.dexType == DEX_CURVE) {
-            _swapCurve(step, amountIn);
-        } else if (step.dexType == DEX_BALANCER) {
-            _swapBalancer(step, amountIn);
-        } else {
-            revert("NexusFlashReceiver: unsupported dexType");
+    function _executeStep(SwapStep memory s, uint256 amountIn)
+        internal returns (uint256 amountOut)
+    {
+        if (s.dex == DEX_UNI_V3) {
+            return _swapUniV3(s, amountIn);
+        } else if (s.dex == DEX_SUSHI_V2 || s.dex == DEX_CAMELOT) {
+            return _swapV2Style(s, amountIn);
+        } else if (s.dex == DEX_CURVE) {
+            return _swapCurve(s, amountIn);
+        } else if (s.dex == DEX_BALANCER) {
+            return _swapBalancer(s, amountIn);
         }
+        revert("NFR: unknown DEX");
     }
 
-    // ─── Uniswap V3 / Camelot V3 ──────────────────────────────────────────────
-    function _swapUniswapV3(SwapStep memory step, uint256 amountIn) internal {
-        (uint24 fee, address routerAddr) = abi.decode(step.extraData, (uint24, address));
-        address router = routerAddr != address(0) ? routerAddr : address(uniswapRouter);
-        _safeApprove(step.tokenIn, router, amountIn);
-        IUniswapV3SwapRouter(router).exactInputSingle(
-            IUniswapV3SwapRouter.ExactInputSingleParams({
-                tokenIn:           step.tokenIn,
-                tokenOut:          step.tokenOut,
-                fee:               fee,
+    function _swapUniV3(SwapStep memory s, uint256 amountIn)
+        internal returns (uint256 amountOut)
+    {
+        IERC20(s.tokenIn).forceApprove(s.router, amountIn);
+        IUniswapV3Router.ExactInputSingleParams memory p =
+            IUniswapV3Router.ExactInputSingleParams({
+                tokenIn:           s.tokenIn,
+                tokenOut:          s.tokenOut,
+                fee:               s.fee,
                 recipient:         address(this),
+                deadline:          s.deadline,
                 amountIn:          amountIn,
-                amountOutMinimum:  step.minAmountOut,
+                amountOutMinimum:  s.amountOutMin,
                 sqrtPriceLimitX96: 0
-            })
+            });
+        amountOut = IUniswapV3Router(s.router).exactInputSingle(p);
+    }
+
+    function _swapV2Style(SwapStep memory s, uint256 amountIn)
+        internal returns (uint256 amountOut)
+    {
+        IERC20(s.tokenIn).forceApprove(s.router, amountIn);
+        address[] memory path = new address[](2);
+        path[0] = s.tokenIn;
+        path[1] = s.tokenOut;
+        uint256[] memory amounts = IUniswapV2Router(s.router)
+            .swapExactTokensForTokens(
+                amountIn, s.amountOutMin, path, address(this), s.deadline
+            );
+        amountOut = amounts[amounts.length - 1];
+    }
+
+    function _callCurveExchange(SwapStep memory s, uint256 amountIn)
+        internal returns (uint256 amountOut)
+    {
+        (bool ok, bytes memory data) = s.router.call(
+            abi.encodeWithSignature(
+                "exchange(int128,int128,uint256,uint256)",
+                s.curveI,
+                s.curveJ,
+                amountIn,
+                s.amountOutMin
+            )
         );
-    }
+        if (ok) {
+            return abi.decode(data, (uint256));
+        }
 
-    // ─── Curve Finance ────────────────────────────────────────────────────────
-    function _swapCurve(SwapStep memory step, uint256 amountIn) internal {
-        (
-            address[11] memory route,
-            uint256[5][5] memory swapParams,
-            address[5] memory pools
-        ) = abi.decode(step.extraData, (address[11], uint256[5][5], address[5]));
-        _safeApprove(step.tokenIn, address(curveRouter), amountIn);
-        curveRouter.exchange(route, swapParams, amountIn, step.minAmountOut, pools);
-    }
+        require(s.curveI >= 0 && s.curveJ >= 0, "NFR: negative curve index");
 
-    // ─── Balancer V2 ──────────────────────────────────────────────────────────
-    function _swapBalancer(SwapStep memory step, uint256 amountIn) internal {
-        bytes32 poolId = abi.decode(step.extraData, (bytes32));
-        _safeApprove(step.tokenIn, address(balancerVault), amountIn);
-        balancerVault.swap(
-            IBalancerVault.SingleSwap({
-                poolId:   poolId,
-                kind:     IBalancerVault.SwapKind.GIVEN_IN,
-                assetIn:  step.tokenIn,
-                assetOut: step.tokenOut,
-                amount:   amountIn,
-                userData: ""
-            }),
-            IBalancerVault.FundManagement({
-                sender:              address(this),
-                fromInternalBalance: false,
-                recipient:           payable(address(this)),
-                toInternalBalance:   false
-            }),
-            step.minAmountOut,
-            block.timestamp
+        (ok, data) = s.router.call(
+            abi.encodeWithSignature(
+                "exchange(uint256,uint256,uint256,uint256)",
+                uint256(uint128(s.curveI)),
+                uint256(uint128(s.curveJ)),
+                amountIn,
+                s.amountOutMin
+            )
         );
+        require(ok, "NFR: curve exchange failed");
+        return abi.decode(data, (uint256));
     }
 
-    // ─── Admin Functions ──────────────────────────────────────────────────────
-    function setExecutor(address _executor) external onlyOwner {
-        executor = _executor;
-        emit ExecutorUpdated(_executor);
+    function _swapCurve(SwapStep memory s, uint256 amountIn)
+        internal returns (uint256 amountOut)
+    {
+        IERC20(s.tokenIn).approve(s.router, amountIn);
+        amountOut = _callCurveExchange(s, amountIn);
     }
 
-    function setPaused(bool _paused) external onlyOwner {
-        paused = _paused;
-        emit Paused(_paused);
+    function _swapBalancer(SwapStep memory s, uint256 amountIn)
+        internal returns (uint256 amountOut)
+    {
+        IERC20(s.tokenIn).approve(s.router, amountIn);
+        IBalancerVault.SingleSwap memory swap = IBalancerVault.SingleSwap({
+            poolId:   s.balancerPoolId,
+            kind:     IBalancerVault.SwapKind.GIVEN_IN,
+            assetIn:  s.tokenIn,
+            assetOut: s.tokenOut,
+            amount:   amountIn,
+            userData: ""
+        });
+        IBalancerVault.FundManagement memory funds = IBalancerVault.FundManagement({
+            sender:              address(this),
+            fromInternalBalance: false,
+            recipient:           payable(address(this)),
+            toInternalBalance:   false
+        });
+        amountOut = IBalancerVault(s.router).swap(swap, funds, s.amountOutMin, s.deadline);
     }
 
-    function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "NexusFlashReceiver: new owner is zero address");
-        emit OwnershipTransferred(owner, newOwner);
-        owner = newOwner;
+    // ── Admin ─────────────────────────────────────────────────────────────────
+
+    /// Withdraw any ERC-20 token (profit or stuck tokens) to owner.
+    function withdraw(address token) external onlyOwner {
+        uint256 bal = IERC20(token).balanceOf(address(this));
+        require(bal > 0, "NFR: nothing to withdraw");
+        IERC20(token).transfer(owner, bal);
+        emit ProfitWithdrawn(token, owner, bal);
     }
 
-    /// @notice Emergency: sweep any ERC-20 token stuck in contract.
-    function emergencyWithdraw(address token) external onlyOwner {
-        uint256 balance = IERC20(token).balanceOf(address(this));
-        if (balance > 0) {
-            IERC20(token).transfer(owner, balance);
-            emit EmergencyWithdraw(token, balance);
-        }
+    /// Sweep native ETH sent accidentally.
+    function withdrawEth() external onlyOwner {
+        uint256 bal = address(this).balance;
+        require(bal > 0, "NFR: no ETH");
+        (bool ok, ) = payable(owner).call{value: bal}("");
+        require(ok, "NFR: ETH transfer failed");
     }
 
-    /// @notice Emergency: sweep native ETH mistakenly sent to contract.
-    function emergencyWithdrawETH() external onlyOwner {
-        uint256 balance = address(this).balance;
-        if (balance > 0) {
-            (bool success, ) = payable(owner).call{value: balance}("");
-            require(success, "NexusFlashReceiver: ETH transfer failed");
-        }
-    }
-
-    // ─── Internal Helpers ────────────────────────────────────────────────────
-
-    /// @dev Call an ERC-20 function and require success + optional bool return.
-    ///      Handles both tokens that revert on failure and non-standard tokens
-    ///      that return false instead of reverting (e.g. older USDT).
-    function _callOptionalReturn(address token, bytes memory data) internal {
-        (bool success, bytes memory returnData) = token.call(data);
-        require(success, "NexusFlashReceiver: ERC20 call failed");
-        if (returnData.length > 0) {
-            require(abi.decode(returnData, (bool)), "NexusFlashReceiver: ERC20 operation failed");
-        }
-    }
-
-    function _safeApprove(address token, address spender, uint256 amount) internal {
-        // Reset to 0 first (required by some tokens, e.g. USDT)
-        _callOptionalReturn(token, abi.encodeWithSelector(IERC20.approve.selector, spender, 0));
-        _callOptionalReturn(token, abi.encodeWithSelector(IERC20.approve.selector, spender, amount));
-    }
-
+    // ── Fallback ──────────────────────────────────────────────────────────────
     receive() external payable {}
 }
