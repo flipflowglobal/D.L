@@ -1,0 +1,132 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Scheduled Maintenance — nightly health checks and weekly dependency freshness
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Scheduled Maintenance
+
+on:
+  schedule:
+    # Nightly at 02:00 UTC — full test suite + integrity check
+    - cron: "0 2 * * *"
+    # Weekly on Sunday at 04:00 UTC — dependency freshness check
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      run_all:
+        description: "Run all maintenance checks"
+        type: boolean
+        default: true
+
+concurrency:
+  group: maintenance
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Nightly health check ─────────────────────────────────────────────────
+  health-check:
+    name: Nightly Health Check
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run lint (pyflakes)
+        run: |
+          pip install pyflakes
+          python -m pyflakes \
+            engine/ intelligence/ vault/ tests/ \
+            kernel/ agents/ core/ \
+            main.py tools.py database.py setup_wallet.py trade.py config.py \
+            aureon_server.py aureon_onthedl.py blockchain_aureon.py \
+            DL_SYSTEM/core/ DL_SYSTEM/agents/
+
+      - name: Run full test suite
+        run: pytest --tb=short -q
+
+      - name: Verify integrity
+        run: |
+          python -c "
+          from core.integrity import IntegrityChecker
+          checker = IntegrityChecker()
+          result = checker.verify_all()
+          print(f'Integrity: {result[\"checked\"]} files checked, passed={result[\"passed\"]}')
+          assert result['passed'], f'Integrity check failed: {result}'
+          "
+
+      - name: Verify all module imports
+        run: |
+          python -c "
+          import sys
+          modules = [
+              'engine.market_data', 'engine.portfolio', 'engine.risk_manager',
+              'engine.strategies.mean_reversion', 'engine.arbitrage.arbitrage_scanner',
+              'engine.dex.liquidity_monitor', 'engine.dex.uniswap_v3', 'engine.dex.sushiswap',
+              'engine.execution.executor', 'engine.execution.swap_executor',
+              'engine.execution.web3_executor', 'intelligence.memory', 'intelligence.autonomy',
+              'vault.wallet_config', 'vault.wallet_manager', 'kernel.watchdog_kernel',
+              'agents.watchdog_agent', 'core.state_manager', 'core.integrity',
+              'tools', 'database', 'main', 'config',
+          ]
+          failed = []
+          for m in modules:
+              try:
+                  __import__(m)
+              except Exception as e:
+                  failed.append(f'{m}: {e}')
+          if failed:
+              print('IMPORT FAILURES:')
+              for f in failed:
+                  print(' ', f)
+              sys.exit(1)
+          print(f'All {len(modules)} modules import successfully')
+          "
+
+      - name: Health check summary
+        if: always()
+        run: |
+          echo "### Nightly Health Check" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Python:** $(python --version)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+
+  # ── Weekly dependency freshness ──────────────────────────────────────────
+  dependency-check:
+    name: Dependency Freshness
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 4 * * 0' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Check for outdated packages
+        run: |
+          pip install -r requirements.txt
+          echo "### Outdated Python Packages" >> $GITHUB_STEP_SUMMARY
+          pip list --outdated --format=columns >> $GITHUB_STEP_SUMMARY 2>&1 || \
+            echo "All packages up to date" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check Rust dependencies (dex-oracle)
+        run: |
+          if command -v cargo &>/dev/null; then
+            echo "### Outdated Rust Packages (dex-oracle)" >> $GITHUB_STEP_SUMMARY
+            cd dex-oracle && cargo update --dry-run 2>&1 | head -50 >> $GITHUB_STEP_SUMMARY || true
+          fi

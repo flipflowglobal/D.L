@@ -47,6 +47,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+import math
 import numpy as np
 
 
@@ -126,7 +127,6 @@ class UnscentedKalmanFilter:
         Returns array of shape (2n+1, n).
         """
         n = self.n
-        scale = math.sqrt((n + self._lam))
         try:
             L = np.linalg.cholesky((n + self._lam) * P)
         except np.linalg.LinAlgError:
@@ -173,6 +173,8 @@ class UnscentedKalmanFilter:
         -------
         UKFState with posterior mean, covariance, innovation, anomaly flag
         """
+        if z <= 0:
+            raise ValueError(f"Price observation must be positive, got {z}")
         if self._x is None:
             # Auto-initialize on first observation
             self.initialize(z)
@@ -247,6 +249,3 @@ class UnscentedKalmanFilter:
         """Current state covariance, or None if not initialized."""
         return self._P.copy() if self._P is not None else None
 
-
-# stdlib import needed by _sigma_points (math.sqrt)
-import math  # noqa: E402 — placed here to avoid circular import issues

@@ -45,7 +45,7 @@ Formal Specification
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -220,7 +220,7 @@ class TradingPolicy:
         logits = self._actor.forward(state)
         probs  = _softmax(logits)
         action = int(self._rng.choice(N_ACTIONS, p=probs))
-        log_prob = math.log(float(probs[action]) + 1e-8)
+        log_prob = math.log(max(float(probs[action]), 1e-10))
         value = float(self._critic.forward(state)[0])
         return action, log_prob, value
 
@@ -359,7 +359,7 @@ class TradingPolicy:
             for i in range(B):
                 logits = self._actor.forward(states[i])
                 probs  = _softmax(logits)
-                lp     = math.log(float(probs[actions[i]]) + 1e-8)
+                lp     = math.log(max(float(probs[actions[i]]), 1e-10))
                 ratio  = math.exp(lp - old_lps[i])
                 cl     = min(ratio * adv[i],
                              np.clip(ratio, 1 - self.clip_eps, 1 + self.clip_eps) * adv[i])
@@ -478,7 +478,7 @@ class TradingPolicy:
         np.ndarray of shape (STATE_DIM,) with all values roughly in [−1, 1].
         """
         norm_price  = price / price_scale - 1.0
-        log_return  = math.log(price / prev_price + 1e-9) if prev_price > 0 else 0.0
+        log_return  = max(-1.0, min(1.0, math.log(price / prev_price + 1e-9))) if prev_price > 0 else 0.0
         vol_norm    = min(volatility * 10.0, 2.0)     # scale 2 % vol → 0.2 after ×10
         pos_norm    = min(max(position / 10.0, -1.0), 1.0)
         dd_norm     = -min(drawdown, 1.0)             # negative reward signal

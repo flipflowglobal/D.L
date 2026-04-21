@@ -46,6 +46,8 @@ Formal Specification
 
 from __future__ import annotations
 
+import logging
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -54,6 +56,8 @@ from typing import Optional
 from web3 import Web3
 
 from engine.mainnet.alchemy_client import AlchemyClient
+
+logger = logging.getLogger("aureon.transaction_manager")
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
 
@@ -101,13 +105,13 @@ class TransactionManager:
     """
 
     DEFAULT_CONFIRM_TIMEOUT = int(
-        __import__("os").getenv("TX_CONFIRM_TIMEOUT", "120")
+        os.getenv("TX_CONFIRM_TIMEOUT", "120")
     )
     DEFAULT_BUMP_TIMEOUT    = int(
-        __import__("os").getenv("TX_BUMP_TIMEOUT", "45")
+        os.getenv("TX_BUMP_TIMEOUT", "45")
     )
     DEFAULT_MAX_GAS_LIMIT   = int(
-        __import__("os").getenv("MAX_GAS_LIMIT", "500000")
+        os.getenv("MAX_GAS_LIMIT", "500000")
     )
 
     def __init__(
@@ -229,6 +233,23 @@ class TransactionManager:
 
         return tx
 
+    def estimate_gas(self, tx: dict) -> int:
+        """
+        Estimate gas for a transaction using eth_estimateGas.
+
+        Returns
+        -------
+        int  estimated gas units (add 20% buffer before using as gasLimit)
+
+        Raises
+        ------
+        ValueError  if estimation fails (e.g., would revert)
+        """
+        try:
+            return self._w3.eth.estimate_gas(tx)
+        except Exception as exc:
+            raise ValueError(f"Gas estimation failed: {exc}") from exc
+
     # ── sign and send ─────────────────────────────────────────────────────────
 
     def sign_and_send(self, tx: dict) -> str:
@@ -275,8 +296,8 @@ class TransactionManager:
                 receipt = self._w3.eth.get_transaction_receipt(h)
                 if receipt is not None:
                     return self._parse_receipt(h, receipt)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Receipt poll for %s: %s", h[:18], exc)
             time.sleep(poll_interval)
 
         raise ConfirmationTimeout(
@@ -350,14 +371,18 @@ class TransactionManager:
                 )
                 if receipt is not None:
                     r = self._parse_receipt(tx_hash, receipt)
-                    print(f"[TxManager] Confirmed block={r.block_number}  "
-                          f"gas_used={r.gas_used:,}  "
-                          f"price={r.effective_gas_price_gwei:.2f} gwei")
-                    return r
+                    required_confs = max(1, self._confs)
+                    current_block = self._w3.eth.block_number
+                    confirmations = max(0, current_block - r.block_number + 1)
+                    if confirmations >= required_confs:
+                        print(f"[TxManager] Confirmed block={r.block_number}  "
+                              f"gas_used={r.gas_used:,}  "
+                              f"price={r.effective_gas_price_gwei:.2f} gwei")
+                        return r
             except TransactionReverted:
                 raise
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Confirmation poll for %s: %s", tx_hash[:18], exc)
 
             # Bump gas if stuck
             if not bumped and time.monotonic() >= bump_at:

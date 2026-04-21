@@ -43,7 +43,8 @@ class RiskManager:
     @staticmethod
     def _today() -> int:
         """Return today's UTC date as an integer YYYYMMDD."""
-        return int(datetime.now(timezone.utc).strftime("%Y%m%d"))
+        now = datetime.now(timezone.utc)
+        return now.year * 10000 + now.month * 100 + now.day
 
     def _maybe_reset(self) -> None:
         """Auto-reset counter when the UTC calendar day rolls over."""
@@ -106,6 +107,11 @@ class RiskManager:
         """Current daily trade count (auto-resets at UTC midnight)."""
         self._maybe_reset()
         return self._trade_count
+
+    @trade_count.setter
+    def trade_count(self, value: int) -> None:
+        """Allow direct assignment for testing and external integrations."""
+        self._trade_count = value
 
     def status(self) -> dict:
         """Return a snapshot of current risk state."""

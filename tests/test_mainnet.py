@@ -466,3 +466,133 @@ class TestSwapExecutorConfig:
                 cost = executor.estimate_gas_usd()
             assert isinstance(cost, float)
             assert cost >= 0
+
+
+# ── FlashLoanExecutor ──────────────────────────────────────────────────────────
+
+class TestFlashLoanExecutor:
+    """Offline tests for FlashLoanExecutor using main's TransactionManager API."""
+
+    def _make_tx_manager(self):
+        """Return a mocked TransactionManager (main's API)."""
+        mgr = MagicMock()
+        mgr.address = "0x" + "a" * 40
+        mgr.build_tx.return_value = {"type": "0x2", "gas": 600_000}
+        receipt = MagicMock()
+        receipt.status = 1
+        receipt.tx_hash = "0x" + "b" * 64
+        receipt.block_number = 12345
+        mgr.send_and_confirm.return_value = receipt
+        mock_w3 = MagicMock()
+        mock_w3.eth.chain_id = 1
+        mock_w3.to_wei.return_value = int(1e18)
+        mgr._w3 = mock_w3
+        return mgr
+
+    def _make_opportunity(self, profitable: bool = True):
+        from nexus_arb.algorithms.bellman_ford import ArbitrageOpportunity, PoolPrice
+        pool1 = PoolPrice(
+            token_in="WETH", token_out="USDC",
+            price=2000.0, price_after_fee=1994.0,
+            fee_bps=30, liquidity=10.0, dex="uniswap_v3"
+        )
+        pool2 = PoolPrice(
+            token_in="USDC", token_out="WETH",
+            price=0.000510, price_after_fee=0.000509,
+            fee_bps=30, liquidity=10.0, dex="sushiswap"
+        )
+        return ArbitrageOpportunity(
+            cycle=["WETH", "USDC", "WETH"],
+            pools=[pool1, pool2],
+            gross_rate=1.03,
+            net_rate=1.02 if profitable else 0.98,
+            expected_profit_pct=2.0 if profitable else -2.0,
+            max_input_eth=5.0,
+            score=10.0 if profitable else 0.0,
+        )
+
+    def _make_executor(self):
+        from nexus_arb.flash_loan_executor import FlashLoanExecutor
+        tx_mgr = self._make_tx_manager()
+        mock_w3 = tx_mgr._w3
+        mock_contract = MagicMock()
+        mock_contract.functions.paused.return_value.call.return_value = False
+        mock_contract.functions.totalProfit.return_value.call.return_value = int(5e16)
+        mock_contract.encodeABI.return_value = "0x" + "ab" * 32
+
+        with patch("web3.Web3.to_checksum_address", side_effect=lambda x: x):
+            exc = FlashLoanExecutor.__new__(FlashLoanExecutor)
+            exc.w3               = mock_w3
+            exc.contract_address = "0x" + "c" * 40
+            exc.tx_manager       = tx_mgr
+            exc.slippage         = 0.005
+            exc.contract         = mock_contract
+        return exc, tx_mgr
+
+    def test_dry_run_returns_none(self):
+        exc, _ = self._make_executor()
+        opp = self._make_opportunity(profitable=True)
+        result = exc.execute(opp, borrow_amount_eth=1.0, dry_run=True)
+        assert result is None
+
+    def test_paused_returns_none(self):
+        exc, _ = self._make_executor()
+        exc.contract.functions.paused.return_value.call.return_value = True
+        opp = self._make_opportunity(profitable=True)
+        result = exc.execute(opp, borrow_amount_eth=1.0, dry_run=False)
+        assert result is None
+
+    def test_execute_calls_build_tx_and_send_and_confirm(self):
+        exc, tx_mgr = self._make_executor()
+        opp = self._make_opportunity(profitable=True)
+        exc.w3.to_wei.return_value = int(1e18)
+        receipt = exc.execute(opp, borrow_amount_eth=1.0, dry_run=False)
+        assert tx_mgr.build_tx.called
+        assert tx_mgr.send_and_confirm.called
+        assert receipt.status == 1
+
+    def test_build_steps_count(self):
+        exc, _ = self._make_executor()
+        opp = self._make_opportunity()
+        exc.w3.to_wei.return_value = int(1e18)
+        steps = exc._build_steps(opp, borrow_wei=int(1e18))
+        assert len(steps) == 2
+
+    def test_build_steps_amount_in_zero(self):
+        exc, _ = self._make_executor()
+        opp = self._make_opportunity()
+        steps = exc._build_steps(opp, borrow_wei=int(1e18))
+        for s in steps:
+            assert s.amount_in == 0  # use full contract balance
+
+    def test_total_profit_eth(self):
+        exc, _ = self._make_executor()
+        profit = exc.total_profit_eth()
+        assert profit == pytest.approx(0.05, abs=0.01)  # 5e16 wei = 0.05 ETH
+
+    def test_invalid_cycle_raises(self):
+        from nexus_arb.algorithms.bellman_ford import ArbitrageOpportunity, PoolPrice
+        exc, _ = self._make_executor()
+        pool = PoolPrice("A", "B", 1.0, 1.0, 30, 1.0, "uniswap_v3")
+        opp = ArbitrageOpportunity(
+            cycle=["A", "B"],  # too short
+            pools=[pool],
+            gross_rate=1.01, net_rate=1.01, expected_profit_pct=1.0,
+            max_input_eth=1.0, score=1.0,
+        )
+        with pytest.raises(ValueError, match="cycle of length"):
+            exc.execute(opp, borrow_amount_eth=1.0, dry_run=False)
+
+    def test_swap_step_to_tuple(self):
+        from nexus_arb.flash_loan_executor import SwapStep, DEX_UNISWAP_V3
+        step = SwapStep(
+            dex_type=DEX_UNISWAP_V3,
+            token_in="0x" + "a" * 40,
+            token_out="0x" + "b" * 40,
+            amount_in=0,
+            min_amount_out=995_000_000,
+            extra_data=b"\x00\x01\xf4",
+        )
+        t = step.to_tuple()
+        assert len(t) == 6
+        assert t[0] == DEX_UNISWAP_V3

@@ -45,11 +45,14 @@ EIP-1559 Fee Model
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Optional, Tuple
 
 from web3 import Web3
+
+logger = logging.getLogger("aureon.alchemy_client")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -207,7 +210,8 @@ class AlchemyClient:
             # web3.py >= 6 exposes this as w3.eth.max_priority_fee
             fee = self._w3.eth.max_priority_fee
             return int(fee)
-        except Exception:
+        except Exception as exc:
+            logger.debug("max_priority_fee RPC failed, using default: %s", exc)
             return int(Web3.to_wei(DEFAULT_PRIORITY_FEE_GWEI, "gwei"))
 
     # ── Account / balance helpers ─────────────────────────────────────────────

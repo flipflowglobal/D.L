@@ -41,7 +41,7 @@ Formal Specification
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 
@@ -220,7 +220,7 @@ class BellmanFordArb:
         return ArbitrageResult(
             has_cycle=profit_ratio > 1.0,
             cycle=cycle_path,
-            profit_ratio=round(profit_ratio, 8),
+            profit_ratio=profit_ratio,
             cycle_edges=cycle_edge_list,
         )
 
@@ -239,3 +239,29 @@ class BellmanFordArb:
             if result.has_cycle and result.profit_ratio > best.profit_ratio:
                 best = result
         return best
+
+
+# ── Legacy compatibility classes ──────────────────────────────────────────────
+
+@dataclass
+class PoolPrice:
+    """Legacy PoolPrice descriptor used by FlashLoanExecutor.execute() and tests."""
+    token_in:       str
+    token_out:      str
+    price:          float
+    price_after_fee: float
+    fee_bps:        int
+    liquidity:      float
+    dex:            str
+
+
+@dataclass
+class ArbitrageOpportunity:
+    """Legacy ArbitrageOpportunity used by FlashLoanExecutor.execute() and tests."""
+    cycle:               List[str]
+    pools:               List[PoolPrice]
+    gross_rate:          float
+    net_rate:            float
+    expected_profit_pct: float
+    max_input_eth:       float
+    score:               float
