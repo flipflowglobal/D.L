@@ -46,7 +46,7 @@ Formal Specification
 
 from __future__ import annotations
 
-import logging
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -104,13 +104,13 @@ class TransactionManager:
     """
 
     DEFAULT_CONFIRM_TIMEOUT = int(
-        __import__("os").getenv("TX_CONFIRM_TIMEOUT", "120")
+        os.getenv("TX_CONFIRM_TIMEOUT", "120")
     )
     DEFAULT_BUMP_TIMEOUT    = int(
-        __import__("os").getenv("TX_BUMP_TIMEOUT", "45")
+        os.getenv("TX_BUMP_TIMEOUT", "45")
     )
     DEFAULT_MAX_GAS_LIMIT   = int(
-        __import__("os").getenv("MAX_GAS_LIMIT", "500000")
+        os.getenv("MAX_GAS_LIMIT", "500000")
     )
 
     def __init__(
