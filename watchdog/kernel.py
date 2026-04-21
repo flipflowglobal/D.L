@@ -23,11 +23,9 @@ Lifecycle
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import List, Optional
 
 from watchdog.agents.db_agent       import DatabaseAgent
 from watchdog.agents.file_agent     import FileAgent
@@ -36,7 +34,7 @@ from watchdog.agents.resource_agent import ResourceAgent
 from watchdog.agents.service_agent  import ServiceAgent
 from watchdog.agents.trade_agent    import TradeLoopAgent
 from watchdog.event_bus             import (
-    EventBus, EventSeverity, EventType, WatchdogEvent, event_bus,
+    EventBus, EventSeverity, WatchdogEvent, event_bus,
 )
 from watchdog.healing.actions       import HealEscalation, HealingStrategy, healing_strategy
 from watchdog.mind.sync             import SharedMind, shared_mind

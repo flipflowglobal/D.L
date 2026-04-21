@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Deque, Optional
+from typing import Any, Deque
 
 MAX_OBSERVATIONS = 64   # rolling history per shard
 

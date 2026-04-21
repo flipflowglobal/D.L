@@ -19,7 +19,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from typing import Callable, Coroutine, Dict, List, Optional
 
 from watchdog.mind.shard import AgentShard
 

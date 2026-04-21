@@ -21,17 +21,16 @@ Or run standalone:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from collections import deque
-from typing import Any, Deque, Dict, List, Optional
+from typing import Deque, List, Optional
 
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
-from watchdog.event_bus  import EventBus, EventSeverity, EventType, WatchdogEvent, event_bus
-from watchdog.kernel     import WatchdogKernel, kernel
+from watchdog.event_bus  import EventSeverity, EventType, WatchdogEvent, event_bus
+from watchdog.kernel     import kernel
 from watchdog.mind.sync  import shared_mind
 
 logger = logging.getLogger("watchdog.dashboard")
