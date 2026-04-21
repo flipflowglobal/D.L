@@ -1,0 +1,73 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Labeler configuration for actions/labeler@v5
+# Maps file path globs to PR labels
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Core trading engine
+engine:
+  - changed-files:
+      - any-glob-to-any-file: "engine/**"
+
+# AI / intelligence modules
+intelligence:
+  - changed-files:
+      - any-glob-to-any-file: "intelligence/**"
+
+# Wallet / vault
+vault:
+  - changed-files:
+      - any-glob-to-any-file: "vault/**"
+
+# Kernel / system management
+kernel:
+  - changed-files:
+      - any-glob-to-any-file: "kernel/**"
+      - any-glob-to-any-file: "core/**"
+      - any-glob-to-any-file: "agents/**"
+
+# Rust components
+rust:
+  - changed-files:
+      - any-glob-to-any-file: "dex-oracle/**"
+      - any-glob-to-any-file: "tx-engine/**"
+
+# Solidity contracts
+solidity:
+  - changed-files:
+      - any-glob-to-any-file: "contracts/**"
+
+# CI / CD workflows
+ci:
+  - changed-files:
+      - any-glob-to-any-file: ".github/workflows/**"
+      - any-glob-to-any-file: "Dockerfile"
+      - any-glob-to-any-file: "docker-compose.yml"
+
+# Tests
+tests:
+  - changed-files:
+      - any-glob-to-any-file: "tests/**"
+      - any-glob-to-any-file: "pytest.ini"
+
+# Configuration / dependencies
+config:
+  - changed-files:
+      - any-glob-to-any-file: "requirements*.txt"
+      - any-glob-to-any-file: "config.py"
+      - any-glob-to-any-file: ".env.example"
+
+# DL_SYSTEM subsystem
+dl-system:
+  - changed-files:
+      - any-glob-to-any-file: "DL_SYSTEM/**"
+
+# Documentation
+docs:
+  - changed-files:
+      - any-glob-to-any-file: "*.md"
+      - any-glob-to-any-file: "docs/**"
+
+# Nexus arbitrage
+nexus-arb:
+  - changed-files:
+      - any-glob-to-any-file: "nexus_arb/**"
