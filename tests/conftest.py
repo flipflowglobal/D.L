@@ -125,7 +125,6 @@ def _patched_requests_get(url: str, *args, **kwargs) -> _MockRequestsResponse:
     if host in _BLOCKED_HOSTS:
         return _MockRequestsResponse(_mock_response_for(url))
     # Let through unblocked hosts (localhost, etc.)
-    import requests as _requests
     return _real_requests_get(url, *args, **kwargs)
 
 
