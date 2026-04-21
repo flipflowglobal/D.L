@@ -17,9 +17,12 @@ Mainnet addresses:
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
 
 from web3 import Web3
+
+logger = logging.getLogger("aureon.uniswap_v3")
 
 # ── Mainnet constants ─────────────────────────────────────────────────────────
 QUOTER_ADDRESS = "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
@@ -90,7 +93,7 @@ class UniswapV3:
             ).call()
             return amount_out_raw / 1e6    # USDC has 6 decimals
         except Exception as exc:
-            print(f"[UniswapV3] Price quote failed (fee={fee}): {exc}")
+            logger.warning("Price quote failed (fee=%d): %s", fee, exc)
             return None
 
     # ── synchronous best-price (sequential — original behaviour) ─────────────
@@ -121,7 +124,7 @@ class UniswapV3:
         All three web3 calls run in the default ThreadPoolExecutor so the
         event loop is never blocked.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         async def _quote(fee: int) -> Optional[float]:
             return await loop.run_in_executor(
@@ -160,7 +163,7 @@ class UniswapV3:
                 0,
             ).call()
         except Exception as exc:
-            print(f"[UniswapV3] quote_token_out failed: {exc}")
+            logger.warning("quote_token_out failed: %s", exc)
             return None
 
     async def quote_token_out_async(
@@ -171,7 +174,7 @@ class UniswapV3:
         fee:           int = FEE_MEDIUM,
     ) -> Optional[int]:
         """Async wrapper for quote_token_out."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
             self.quote_token_out,

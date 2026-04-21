@@ -8,9 +8,13 @@ fetch that market_data.py already performs in the same cycle.
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from typing import Optional
 
 from engine.price_cache import price_cache
+
+logger = logging.getLogger("aureon.liquidity_monitor")
 
 
 class LiquidityMonitor:
@@ -28,8 +32,9 @@ class LiquidityMonitor:
         "?ids=ethereum&vs_currencies=usd"
     )
 
-    def __init__(self):
-        self._dex_oracle_url: Optional[str] = "http://localhost:9001"
+    def __init__(self) -> None:
+        _addr = os.getenv("DEX_ORACLE_ADDR", "127.0.0.1:9001")
+        self._dex_oracle_url: str = f"http://{_addr}"
 
     # ── synchronous ───────────────────────────────────────────────────────────
 
@@ -75,8 +80,8 @@ class LiquidityMonitor:
                 prices = [v for v in data.values() if isinstance(v, (int, float)) and v > 0]
                 if prices:
                     return max(prices)   # use the best available price
-        except Exception:
-            pass   # sidecar not running — fall through to CoinGecko
+        except Exception as exc:
+            logger.debug("dex-oracle sidecar unavailable: %s", exc)
         return None
 
     # ── async ─────────────────────────────────────────────────────────────────
@@ -97,9 +102,9 @@ class LiquidityMonitor:
                     prices = [v for v in data.values() if isinstance(v, (int, float)) and v > 0]
                     if prices:
                         return max(prices)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("dex-oracle async unavailable: %s", exc)
 
         # Fallback: run sync get_price in executor (uses shared cache)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.get_price)

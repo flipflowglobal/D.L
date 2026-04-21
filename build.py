@@ -165,7 +165,7 @@ async def build_solidity() -> dict:
         return _fail("solidity", f"{SOL_FILE} not found", t0)
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _compile_solidity_sync)
     except Exception as exc:
         return _fail("solidity", str(exc), t0)

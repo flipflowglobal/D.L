@@ -1,6 +1,6 @@
-from agents.task_agent import TaskAgent
-from core.state_manager import StateManager
-from core.logger import log_event
+from ..agents.task_agent import TaskAgent
+from .state_manager import StateManager
+from .logger import log_event
 
 class Orchestrator:
     def __init__(self):

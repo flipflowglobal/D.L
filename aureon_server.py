@@ -1,4 +1,14 @@
+"""
+aureon_server.py — Aureon agent server (monitoring, execution, analysis).
+
+Provides a FastAPI server with background worker tasks, an agent registry,
+and a task queue.  Exposes REST endpoints to create agents and submit tasks.
+"""
+
+from __future__ import annotations
+
 import asyncio
+import logging
 import uuid
 import platform
 from contextlib import asynccontextmanager
@@ -6,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
 from enum import Enum
+
+logger = logging.getLogger("aureon.server")
 
 try:
     import psutil
@@ -117,9 +129,9 @@ class Orchestrator:
                 result = analyze_text(task.payload["text"])
             else:
                 result = {"status": "unknown"}
-            print("TASK RESULT:", result)
+            logger.info("Task result: %s", result)
         except Exception as e:
-            print("ERROR:", e)
+            logger.error("Task error: %s", e)
         agent.status = AgentStatus.IDLE
 
 
@@ -139,7 +151,12 @@ def file_manager(task):
     action = task.payload.get("action")
     if action == "list":
         path = task.payload.get("path", ".")
-        return [str(p) for p in Path(path).glob("*")]
+        # Restrict to project directory — prevent path traversal
+        base = Path(__file__).resolve().parent
+        target = (base / path).resolve()
+        if not str(target).startswith(str(base)):
+            return {"error": "access denied — path outside project directory"}
+        return [str(p) for p in target.glob("*")]
     return {"status": "unknown"}
 
 
@@ -215,5 +232,6 @@ async def add_task(task: TaskRequest):
 # ---------------- MAIN ----------------
 
 if __name__ == "__main__":
-    print("\nAUREON SERVER STARTING\n")
+    logging.basicConfig(level=logging.INFO)
+    logger.info("AUREON SERVER STARTING on %s:%d", Config.HOST, Config.PORT)
     uvicorn.run(app, host=Config.HOST, port=Config.PORT)

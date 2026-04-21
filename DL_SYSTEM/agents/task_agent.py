@@ -1,5 +1,5 @@
-from integrations.galxe import run_galxe_task
-from integrations.layer3 import run_layer3_task
+from ..integrations.galxe import run_galxe_task
+from ..integrations.layer3 import run_layer3_task
 
 class TaskAgent:
     def execute(self, task):

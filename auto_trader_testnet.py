@@ -4,14 +4,18 @@ auto_trader_testnet.py — Simple testnet auto-trading loop.
 Uses live ETH/USD price from MarketData, simulated execution via Executor.
 """
 
-from dotenv import load_dotenv
+from __future__ import annotations
+
 import os
-from vault.wallet_config import WalletConfig
+import time
+
+from dotenv import load_dotenv
+
 from engine.execution.executor import Executor
 from engine.market_data import MarketData
 from engine.portfolio import Portfolio
 from engine.strategies.mean_reversion import MeanReversionStrategy
-from time import sleep
+from vault.wallet_config import WalletConfig
 
 load_dotenv(".env")
 
@@ -56,7 +60,7 @@ for step in range(TRADE_CYCLES):
     print(f"  Portfolio: ${portfolio.balance_usd:,.2f} USD  |  {portfolio.balance_eth:.4f} ETH")
 
     if step < TRADE_CYCLES - 1:
-        sleep(SCAN_INTERVAL)
+        time.sleep(SCAN_INTERVAL)
 
 print("\nTrading session complete.")
 print("Final portfolio:", portfolio.summary())

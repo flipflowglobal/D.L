@@ -79,11 +79,12 @@ try:
         b"",
         0,
     ).build_transaction({
-        "from": wallet.account.address,
-        "nonce": w3.eth.get_transaction_count(wallet.account.address),
-        "gas": 500_000,
-        "gasPrice": w3.to_wei("20", "gwei"),
-        "chainId": w3.eth.chain_id,
+        "from":                 wallet.account.address,
+        "nonce":                w3.eth.get_transaction_count(wallet.account.address),
+        "gas":                  500_000,
+        "maxFeePerGas":         w3.to_wei(50, "gwei"),
+        "maxPriorityFeePerGas": w3.to_wei(2,  "gwei"),
+        "chainId":              w3.eth.chain_id,
     })
 
     signed_tx = wallet.account.sign_transaction(tx)
@@ -92,7 +93,7 @@ try:
     print("Transaction built and signed successfully!")
     print("TX nonce       :", tx["nonce"])
     print("TX gas         :", tx["gas"])
-    print("TX gas price   :", w3.from_wei(tx["gasPrice"], "gwei"), "gwei")
+    print("TX maxFeePerGas:", w3.from_wei(tx["maxFeePerGas"], "gwei"), "gwei")
     print("TX call data   :", tx["data"][:66], "...")
     print("Signed TX bytes:", len(signed_tx.raw_transaction))
     print("TX NOT sent — dry run safe ✅")

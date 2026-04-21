@@ -6,8 +6,10 @@ Fully integrated: MarketData, Portfolio, RiskManager, Strategy, Arbitrage, Liqui
 Safe for testnet / simulated trading
 """
 
+from __future__ import annotations
+
+import os
 import time
-import random
 
 from engine.market_data import MarketData
 from engine.portfolio import Portfolio
@@ -17,7 +19,7 @@ from engine.arbitrage.arbitrage_scanner import ArbitrageScanner
 from engine.dex.liquidity_monitor import LiquidityMonitor
 from engine.execution.executor import Executor
 
-TRADE_INTERVAL = 5  # seconds between trade cycles
+TRADE_INTERVAL = int(os.getenv("SCAN_INTERVAL", "5"))  # seconds between trade cycles
 
 def run():
     # Initialize modules

@@ -1,7 +1,10 @@
 import json
+import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
+
+logger = logging.getLogger("aureon.portfolio")
 
 TRADE_LOG_FILE = os.path.join(
     os.path.dirname(__file__), "..", "vault", "trade_log.json"
@@ -55,7 +58,7 @@ class Portfolio:
                 self.sell(price, amount)
 
         self.trades.append({
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "side":      side,
             "price_usd": round(price, 4),
             "amount_eth": round(amount, 6),
@@ -80,18 +83,21 @@ class Portfolio:
     def _last_price(self) -> float:
         """Best-effort last known ETH price from trade history."""
         for t in reversed(self.trades):
-            if t.get("price_usd"):
+            if t.get("price_usd") and t["price_usd"] > 0:
                 return t["price_usd"]
-        return 0.0
+        return 1.0  # non-zero: avoids wiping ETH value before first trade is recorded
 
     def save_trade_log(self, path: Optional[str] = None) -> None:
         target = path or TRADE_LOG_FILE
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        payload = {
-            "saved_at":    datetime.utcnow().isoformat(),
-            "initial_usd": self.initial_usd,
-            "summary":     self.summary(),
-            "trades":      self.trades,
-        }
-        with open(target, "w") as f:
-            json.dump(payload, f, indent=2)
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            payload = {
+                "saved_at":    datetime.now(timezone.utc).isoformat(),
+                "initial_usd": self.initial_usd,
+                "summary":     self.summary(),
+                "trades":      self.trades,
+            }
+            with open(target, "w") as f:
+                json.dump(payload, f, indent=2)
+        except OSError as exc:
+            logger.error("Failed to save trade log to %s: %s", target, exc)

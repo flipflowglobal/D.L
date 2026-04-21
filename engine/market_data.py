@@ -10,10 +10,13 @@ Changes vs original:
 
 from __future__ import annotations
 
+import logging
 import os
 import requests
 
 from engine.price_cache import price_cache
+
+logger = logging.getLogger("aureon.market_data")
 
 _FALLBACK = float(os.getenv("FALLBACK_ETH_PRICE", "2000.0"))
 
@@ -27,8 +30,8 @@ class MarketData:
     """
 
     COINGECKO_URL = (
-        "https://api.coingecko.com/api/v3/simple/price"
-        "?ids=ethereum&vs_currencies=usd"
+        os.getenv("COINGECKO_BASE_URL", "https://api.coingecko.com")
+        + "/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
     )
     FALLBACK_PRICE: float = _FALLBACK
 
@@ -79,5 +82,5 @@ class MarketData:
                 price_cache.get(lambda: price)
                 return price
         except Exception as exc:
-            print(f"[MarketData] async fetch failed ({exc}), using fallback {self.FALLBACK_PRICE}")
+            logger.warning("async fetch failed (%s), using fallback %.2f", exc, self.FALLBACK_PRICE)
             return self.FALLBACK_PRICE

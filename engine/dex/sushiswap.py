@@ -15,9 +15,12 @@ Mainnet addresses:
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
 
 from web3 import Web3
+
+logger = logging.getLogger("aureon.sushiswap")
 
 SUSHI_ROUTER = "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -74,7 +77,7 @@ class SushiSwap:
             ).call()
             return amounts[1] / 1e6    # USDC has 6 decimals
         except Exception as exc:
-            print(f"[SushiSwap] Price quote failed: {exc}")
+            logger.warning("Price quote failed: %s", exc)
             return None
 
     def get_amounts_out(
@@ -87,7 +90,7 @@ class SushiSwap:
                 amount_in_wei, checksummed
             ).call()
         except Exception as exc:
-            print(f"[SushiSwap] getAmountsOut failed: {exc}")
+            logger.warning("getAmountsOut failed: %s", exc)
             return None
 
     # ── async versions ────────────────────────────────────────────────────────
@@ -104,14 +107,14 @@ class SushiSwap:
                 sushi.get_eth_price_usdc_async(),
             )
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.get_eth_price_usdc)
 
     async def get_amounts_out_async(
         self, amount_in_wei: int, path: list
     ) -> Optional[list]:
         """Async wrapper for get_amounts_out."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self.get_amounts_out, amount_in_wei, path
         )
