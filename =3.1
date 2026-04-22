@@ -1,6 +1,41 @@
-# Removed committed `pip install` output/log content from this file.
-# If tool versions need to be pinned, record them in requirements*.txt
-# or the CI workflow instead of tracking installer output.
+Collecting pyflakes
+  Using cached pyflakes-3.4.0-py2.py3-none-any.whl.metadata (3.5 kB)
+Collecting ruff
+  Downloading ruff-0.15.11-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (26 kB)
+Collecting black
+  Downloading black-26.3.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (91 kB)
+Collecting isort
+  Downloading isort-8.0.1-py3-none-any.whl.metadata (11 kB)
+Collecting mypy
+  Downloading mypy-1.20.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+Collecting pylint
+  Downloading pylint-4.0.5-py3-none-any.whl.metadata (12 kB)
+Collecting flake8
+  Downloading flake8-7.3.0-py2.py3-none-any.whl.metadata (3.8 kB)
+Collecting flake8-bugbear
+  Downloading flake8_bugbear-25.11.29-py3-none-any.whl.metadata (35 kB)
+Collecting pyupgrade
+  Downloading pyupgrade-3.21.2-py2.py3-none-any.whl.metadata (15 kB)
+Collecting autoflake
+  Downloading autoflake-2.3.3-py3-none-any.whl.metadata (7.6 kB)
+Collecting bandit
+  Downloading bandit-1.9.4-py3-none-any.whl.metadata (7.1 kB)
+Collecting safety
+  Downloading safety-3.7.0-py3-none-any.whl.metadata (11 kB)
+Requirement already satisfied: click>=8.0.0 in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (from black) (8.3.2)
+Collecting mypy-extensions>=0.4.3 (from black)
+  Downloading mypy_extensions-1.1.0-py3-none-any.whl.metadata (1.1 kB)
+Requirement already satisfied: packaging>=22.0 in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (from black) (26.1)
+Collecting pathspec>=1.0.0 (from black)
+  Downloading pathspec-1.0.4-py3-none-any.whl.metadata (13 kB)
+Collecting platformdirs>=2 (from black)
+  Downloading platformdirs-4.9.6-py3-none-any.whl.metadata (4.7 kB)
+Collecting pytokens~=0.4.0 (from black)
+  Downloading pytokens-0.4.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (3.8 kB)
+Requirement already satisfied: typing_extensions>=4.6.0 in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (from mypy) (4.15.0)
+Collecting librt>=0.8.0 (from mypy)
+  Downloading librt-0.9.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (1.3 kB)
+Collecting astroid<=4.1.dev0,>=4.0.2 (from pylint)
   Downloading astroid-4.0.4-py3-none-any.whl.metadata (4.4 kB)
 Collecting dill>=0.3.6 (from pylint)
   Downloading dill-0.4.1-py3-none-any.whl.metadata (10 kB)
@@ -73,15 +108,15 @@ Requirement already satisfied: charset_normalizer<4,>=2 in /opt/hostedtoolcache/
 Requirement already satisfied: urllib3<3,>=1.26 in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (from requests->safety) (2.6.3)
 Using cached pyflakes-3.4.0-py2.py3-none-any.whl (63 kB)
 Downloading ruff-0.15.11-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (11.3 MB)
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 11.3/11.3 MB 162.8 MB/s  0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 11.3/11.3 MB 43.9 MB/s  0:00:00
 Downloading black-26.3.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (1.8 MB)
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.8/1.8 MB 135.1 MB/s  0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.8/1.8 MB 94.0 MB/s  0:00:00
 Downloading pytokens-0.4.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (260 kB)
 Downloading isort-8.0.1-py3-none-any.whl (89 kB)
 Downloading mypy-1.20.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (14.6 MB)
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 14.6/14.6 MB 159.3 MB/s  0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 14.6/14.6 MB 161.9 MB/s  0:00:00
 Downloading pylint-4.0.5-py3-none-any.whl (536 kB)
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 536.7/536.7 kB 114.8 MB/s  0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 536.7/536.7 kB 85.6 MB/s  0:00:00
 Downloading astroid-4.0.4-py3-none-any.whl (276 kB)
 Downloading mccabe-0.7.0-py2.py3-none-any.whl (7.3 kB)
 Downloading flake8-7.3.0-py2.py3-none-any.whl (57 kB)
@@ -97,13 +132,13 @@ Downloading dill-0.4.1-py3-none-any.whl (120 kB)
 Downloading dparse-0.6.4-py3-none-any.whl (11 kB)
 Downloading joserfc-1.6.4-py3-none-any.whl (70 kB)
 Downloading cryptography-46.0.7-cp311-abi3-manylinux_2_34_x86_64.whl (4.5 MB)
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.5/4.5 MB 382.6 MB/s  0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.5/4.5 MB 215.1 MB/s  0:00:00
 Downloading cffi-2.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (215 kB)
 Downloading librt-0.9.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (224 kB)
 Downloading marshmallow-4.3.0-py3-none-any.whl (49 kB)
 Downloading mypy_extensions-1.1.0-py3-none-any.whl (5.0 kB)
 Downloading nltk-3.9.4-py3-none-any.whl (1.6 MB)
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.6/1.6 MB 287.5 MB/s  0:00:00
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.6/1.6 MB 218.5 MB/s  0:00:00
 Downloading pathspec-1.0.4-py3-none-any.whl (55 kB)
 Downloading platformdirs-4.9.6-py3-none-any.whl (21 kB)
 Downloading ruamel_yaml-0.19.1-py3-none-any.whl (118 kB)
