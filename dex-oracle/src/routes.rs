@@ -141,12 +141,18 @@ pub async fn invalidate_cache(State(s): State<AppState>) -> Json<Value> {
 
 pub async fn get_config(State(s): State<AppState>) -> Json<Value> {
     Json(json!({
-        "bind_addr":       s.config.bind_addr,
-        "cache_ttl_secs":  s.config.cache_ttl_secs,
-        "spread_threshold": s.config.spread_threshold,
-        "fallback_price":  s.config.fallback_price,
-        "rpc_timeout_ms":  s.config.rpc_timeout_ms,
-        "simulation_mode": s.config.simulation_mode,
-        "rpc_configured":  s.config.rpc_url.is_some(),
+        "bind_addr":          s.config.bind_addr,
+        "cache_ttl_secs":     s.config.cache_ttl_secs,
+        "spread_threshold":   s.config.spread_threshold,
+        "fallback_price":     s.config.fallback_price,
+        "rpc_timeout_ms":     s.config.rpc_timeout_ms,
+        "simulation_mode":    s.config.simulation_mode,
+        "rpc_configured":     s.config.rpc_url.is_some(),
+        // Extended DEX sources
+        "curve_pool":         s.config.curve_pool_addr.as_deref().unwrap_or("0xD51a44d3FaE010294C616388b506AcdA1bfAAE46"),
+        "balancer_vault":     s.config.balancer_vault_addr.as_deref().unwrap_or("0xBA12222222228d8Ba445958a75a0704d566BF2C8"),
+        "balancer_pool_id":   s.config.balancer_pool_id.as_deref()
+                                  .unwrap_or("0x96646936b91d6b9d7d0c47c496afbf3d6ec7b6f5000200000000000000000019"),
+        "camelot_enabled":    s.config.camelot_router_addr.is_some(),
     }))
 }
