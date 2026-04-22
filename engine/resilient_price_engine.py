@@ -156,6 +156,22 @@ class ResilientPriceEngine:
             {"uniswap_v3": FALLBACK_PRICE, "sushiswap": FALLBACK_PRICE}
         )
 
+    def _select_kalman_reference_price(self, prices: dict) -> float:
+        """Select a deterministic reference price for Kalman smoothing."""
+        for key in ("uniswap_v3", "sushiswap"):
+            value = prices.get(key)
+            if value is not None:
+                return float(value)
+
+        for key in sorted(prices):
+            if key == "kalman_filtered":
+                continue
+            value = prices.get(key)
+            if value is not None:
+                return float(value)
+
+        raise StopIteration("no usable price entries found")
+
     async def _attach_kalman(self, prices: dict) -> dict:
         """Add a 'kalman_filtered' key with the IMM-UKF smoothed price."""
         try:
@@ -163,7 +179,7 @@ class ResilientPriceEngine:
                 from nexus_arb.kalman_filter import KalmanFilter
                 self._kalman = KalmanFilter()
 
-            ref = float(next(iter(prices.values())))
+            ref = self._select_kalman_reference_price(prices)
             state = await self._kalman.update(ref)
             filtered_price = float(state.price_est)
             self._filtered_price = filtered_price
