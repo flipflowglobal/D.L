@@ -1,33 +1,13 @@
-Requirement already satisfied: pytest in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (9.0.3)
-Requirement already satisfied: pytest-asyncio in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (1.3.0)
-Collecting pytest-cov
-  Downloading pytest_cov-7.1.0-py3-none-any.whl.metadata (32 kB)
-Collecting pytest-mock
-  Downloading pytest_mock-3.15.1-py3-none-any.whl.metadata (3.9 kB)
-Collecting pytest-httpx
-  Downloading pytest_httpx-0.36.2-py3-none-any.whl.metadata (36 kB)
-Collecting pytest-timeout
-  Downloading pytest_timeout-2.4.0-py3-none-any.whl.metadata (20 kB)
-Collecting pytest-xdist
-  Downloading pytest_xdist-3.8.0-py3-none-any.whl.metadata (3.0 kB)
-Collecting pytest-randomly
-  Downloading pytest_randomly-4.1.0-py3-none-any.whl.metadata (8.6 kB)
-Requirement already satisfied: anyio in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (4.13.0)
-Collecting responses
-  Downloading responses-0.26.0-py3-none-any.whl.metadata (48 kB)
-Collecting httpretty
-  Downloading httpretty-1.1.4.tar.gz (442 kB)
-  Installing build dependencies: started
-  Installing build dependencies: finished with status 'done'
-  Getting requirements to build wheel: started
-  Getting requirements to build wheel: finished with status 'done'
-  Preparing metadata (pyproject.toml): started
-  Preparing metadata (pyproject.toml): finished with status 'done'
-Requirement already satisfied: iniconfig>=1.0.1 in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (from pytest) (2.3.0)
-Requirement already satisfied: packaging>=22 in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (from pytest) (26.1)
-Requirement already satisfied: pluggy<2,>=1.5 in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (from pytest) (1.6.0)
-Requirement already satisfied: pygments>=2.7.2 in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (from pytest) (2.20.0)
-Requirement already satisfied: typing-extensions>=4.12 in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (from pytest-asyncio) (4.15.0)
+pytest==9.0.3
+pytest-asyncio==1.3.0
+pytest-cov==7.1.0
+pytest-mock==3.15.1
+pytest-httpx==0.36.2
+pytest-timeout==2.4.0
+pytest-xdist==3.8.0
+pytest-randomly==4.1.0
+responses==0.26.0
+httpretty==1.1.4
 Collecting coverage>=7.10.6 (from coverage[toml]>=7.10.6->pytest-cov)
   Downloading coverage-7.13.5-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (8.5 kB)
 Requirement already satisfied: httpx==0.28.* in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (from pytest-httpx) (0.28.1)
