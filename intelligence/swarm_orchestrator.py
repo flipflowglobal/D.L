@@ -43,6 +43,8 @@ class SwarmOrchestrator:
         self._task: Optional[asyncio.Task] = None
         self._running   = False
         self._started   = time.time()
+        self._shapley_scores: Dict[str, float] = {}
+        self._dominant_regime: str = "unknown"
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -121,6 +123,42 @@ class SwarmOrchestrator:
         }
 
     # ── Broadcast commands ────────────────────────────────────────────────────
+
+    def shapley_consensus(self) -> Dict[str, float]:
+        """
+        Compute Monte-Carlo Shapley attribution across all agents.
+        Maps agent_id → Shapley contribution score.
+        Falls back to empty dict if ShapleyScorer unavailable.
+        """
+        agents = list(self._registry._agents.values())
+        if not agents:
+            return {}
+        try:
+            from nexus_arb.shapley_scorer import ShapleyScorer
+            pnls = {a.id: max(a.total_pnl, 0.0) for a in agents}
+            agent_ids = list(pnls.keys())
+            vals = [pnls[aid] for aid in agent_ids]
+            n = len(agent_ids)
+            scorer = ShapleyScorer(n_players=n, n_samples=min(64, 2 ** n))
+            def v(S):
+                return sum(vals[i] for i in S)
+            phi = scorer.shapley_values(v)
+            result = {agent_ids[i]: round(float(phi[i]), 6) for i in range(n)}
+            self._shapley_scores = result
+            return result
+        except Exception as exc:
+            logger.debug("shapley_consensus failed: %s", exc)
+            return {}
+
+    def dominant_regime(self) -> str:
+        """Return the most-common regime label across all agents."""
+        agents = list(self._registry._agents.values())
+        regimes = [getattr(a, "regime", "unknown") for a in agents]
+        if not regimes:
+            return "unknown"
+        from collections import Counter
+        self._dominant_regime = Counter(regimes).most_common(1)[0][0]
+        return self._dominant_regime
 
     async def broadcast_start(
         self,

@@ -10,8 +10,7 @@ beta anneal: beta(t) = beta0 + (1-beta0)*min(t/T, 1)  beta0=0.4
 """
 from __future__ import annotations
 
-import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 

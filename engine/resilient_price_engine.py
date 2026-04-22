@@ -112,6 +112,10 @@ class ResilientPriceEngine:
         # Shared price cache (singleton from engine/price_cache.py)
         self._cache = None
 
+        # Kalman filter for price smoothing (soft-fail)
+        self._kalman = None
+        self._filtered_price: float = 0.0
+
         self._stats = {
             "rust_hits":   0,
             "python_hits": 0,
@@ -132,22 +136,36 @@ class ResilientPriceEngine:
         prices = await self._try_rust()
         if prices:
             self._stats["rust_hits"] += 1
-            return prices
+            return await self._attach_kalman(prices)
 
         prices = await self._try_python_rpc()
         if prices:
             self._stats["python_hits"] += 1
-            return prices
+            return await self._attach_kalman(prices)
 
         prices = await self._try_coingecko()
         if prices:
             self._stats["gecko_hits"] += 1
-            return prices
+            return await self._attach_kalman(prices)
 
         # Layer 4: static fallback — always succeeds
         self._stats["fallback_hits"] += 1
         logger.error("ALL price sources failed — using static fallback $%.2f", FALLBACK_PRICE)
         return {"uniswap_v3": FALLBACK_PRICE, "sushiswap": FALLBACK_PRICE}
+
+    async def _attach_kalman(self, prices: dict) -> dict:
+        """Add a 'kalman_filtered' key with the IMM-UKF smoothed price."""
+        try:
+            if self._kalman is None:
+                from nexus_arb.kalman_filter import KalmanFilter
+                self._kalman = KalmanFilter()
+            ref = float(next(iter(prices.values())))
+            state = await self._kalman.update(ref)
+            self._filtered_price = state.price_est
+            prices["kalman_filtered"] = round(state.price_est, 4)
+        except Exception:
+            pass
+        return prices
 
     def stats(self) -> dict:
         s = dict(self._stats)
