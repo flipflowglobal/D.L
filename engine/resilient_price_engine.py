@@ -20,7 +20,8 @@ Key design decisions:
     of how many callers hit this simultaneously
   - Circuit breaker per source — broken source is skipped for CIRCUIT_OPEN_SECS
     before retrying, preventing latency pileup on a dead RPC
-  - All paths return the same dict shape: {"uniswap_v3": float, "sushiswap": float}
+  - All paths return the same base dict shape: {"uniswap_v3": float, "sushiswap": float}
+    and include {"kalman_filtered": float} when the optional Kalman filter is available
 """
 
 import asyncio
@@ -151,7 +152,9 @@ class ResilientPriceEngine:
         # Layer 4: static fallback — always succeeds
         self._stats["fallback_hits"] += 1
         logger.error("ALL price sources failed — using static fallback $%.2f", FALLBACK_PRICE)
-        return {"uniswap_v3": FALLBACK_PRICE, "sushiswap": FALLBACK_PRICE}
+        return await self._attach_kalman(
+            {"uniswap_v3": FALLBACK_PRICE, "sushiswap": FALLBACK_PRICE}
+        )
 
     async def _attach_kalman(self, prices: dict) -> dict:
         """Add a 'kalman_filtered' key with the IMM-UKF smoothed price."""
