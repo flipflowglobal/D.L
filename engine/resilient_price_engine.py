@@ -159,12 +159,16 @@ class ResilientPriceEngine:
             if self._kalman is None:
                 from nexus_arb.kalman_filter import KalmanFilter
                 self._kalman = KalmanFilter()
+
             ref = float(next(iter(prices.values())))
             state = await self._kalman.update(ref)
-            self._filtered_price = state.price_est
-            prices["kalman_filtered"] = round(state.price_est, 4)
-        except Exception:
-            pass
+            filtered_price = float(state.price_est)
+            self._filtered_price = filtered_price
+            prices["kalman_filtered"] = round(filtered_price, 4)
+        except ImportError as exc:
+            logger.debug("Kalman filter unavailable: %s", exc)
+        except (StopIteration, TypeError, ValueError, AttributeError) as exc:
+            logger.debug("Kalman filter update skipped: %s", exc)
         return prices
 
     def stats(self) -> dict:
