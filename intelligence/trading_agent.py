@@ -196,6 +196,8 @@ class TradingAgent:
 
         # ── Algorithm ─────────────────────────────────────────────────────────
         self._algorithm = self._build_algorithm()
+        self._shapley   = self._build_advanced_scorer()
+        self._regime: str = "unknown"
 
         # ── Portfolio state ────────────────────────────────────────────────────
         self._capital      = config.initial_capital
@@ -214,6 +216,19 @@ class TradingAgent:
         self._task: Optional[asyncio.Task] = None
 
     # ── Algorithm factory ─────────────────────────────────────────────────────
+
+    def _build_advanced_scorer(self):
+        """Instantiate ShapleyScorer for multi-agent attribution (soft fail)."""
+        try:
+            from nexus_arb.shapley_scorer import ShapleyScorer
+            return ShapleyScorer(n_players=5, n_samples=128)
+        except Exception:
+            return None
+
+    @property
+    def regime(self) -> str:
+        """Current market regime classification."""
+        return self._regime
 
     def _build_algorithm(self) -> Any:
         """Instantiate the algorithm appropriate for this agent's strategy."""
@@ -310,6 +325,7 @@ class TradingAgent:
             "total_pnl":      self.total_pnl,
             "errors":         self.errors,
             "status":         self.status.value,
+            "regime":         self._regime,
         }
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -617,6 +633,7 @@ class TradingAgent:
             "total_pnl_usd":  round(self.total_pnl, 2),
             "roi_pct":        round(roi * 100, 4),
             "max_drawdown_pct": round(drawdown * 100, 4),
+            "regime":         self._regime,
             "last_result":    self._last_result,
             "chain_meta":     CHAIN_META.get(self.config.chain.value, {}),
         }
