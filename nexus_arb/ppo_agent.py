@@ -1,7 +1,11 @@
 # Copyright (c) 2026 Darcel King. All rights reserved.
 # SPDX-License-Identifier: LicenseRef-Proprietary
 """
-nexus_arb/ppo_agent.py — GRU-PPO with ICM, PER, and Dual-Clip.
+nexus_arb/ppo_agent.py — specialized recurrent PPO agent with GRU, ICM, PER,
+and dual-clip PPO updates.
+
+This module intentionally exposes a specialized agent wrapper rather than the
+project's canonical generic PPO policy implementation.
 """
 from __future__ import annotations
 
@@ -13,6 +17,8 @@ from typing import Dict, List, Tuple
 import numpy as np
 
 from nexus_arb.per_replay import PERBuffer
+
+__all__ = ["RecurrentPPOAgent", "PPOAgent"]
 
 logger = logging.getLogger("nexus_arb.ppo_agent")
 
@@ -134,7 +140,7 @@ class Transition:
     info:     Dict = field(default_factory=dict)
 
 
-class PPOAgent:
+class RecurrentPPOAgent:
     def __init__(self, obs_dim: int, n_actions: int, hidden_dim: int = GRU_HIDDEN,
                  use_icm: bool = True, use_per: bool = True, event_bus=None) -> None:
         self._obs_dim   = obs_dim
@@ -250,3 +256,7 @@ class PPOAgent:
     @property
     def metrics(self) -> Dict[str, float]:
         return dict(self._metrics)
+
+
+class PPOAgent(RecurrentPPOAgent):
+    """Backward-compatible alias for the specialized recurrent PPO agent."""

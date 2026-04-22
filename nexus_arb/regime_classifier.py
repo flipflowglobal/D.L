@@ -145,7 +145,10 @@ class RegimeClassifier:
     def viterbi_decode(self, obs_sequence: List) -> Tuple[List[str], float]:
         seq = np.asarray(obs_sequence, dtype=float)
         if seq.ndim == 1:
-            seq = np.tile(seq.reshape(-1, 1), (1, OBS_DIM))
+            if len(seq) == OBS_DIM:
+                seq = seq.reshape(1, OBS_DIM)
+            else:
+                seq = np.tile(seq.reshape(-1, 1), (1, OBS_DIM))
         T = len(seq)
         log_A = np.log(np.clip(self._A, 1e-300, 1.0))
         log_pi = np.log(np.clip(self._pi, 1e-300, 1.0))
