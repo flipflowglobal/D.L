@@ -166,7 +166,7 @@ class BellmanFordScanner:
                 address=self._w3.to_checksum_address(pool_addr),
                 abi=POOL_SLOT0_ABI + POOL_LIQ_ABI,
             )
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             slot0, liquidity = await asyncio.gather(
                 loop.run_in_executor(None, pool.functions.slot0().call),
                 loop.run_in_executor(None, pool.functions.liquidity().call),
