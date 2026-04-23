@@ -63,7 +63,7 @@ if [[ -f requirements-optional.txt ]]; then
   info "Installing Termux-safe optional dependencies (excluding playwright)..."
   while IFS= read -r dep; do
     [[ -z "$dep" ]] && continue
-    "$PYTHON_BIN" -m pip install "$dep" || warn "Could not install optional dep: $dep"
+    "$PYTHON_BIN" -m pip install "$dep" || warn "Could not install optional dep '$dep' - check pip output above."
   done < <(awk 'NF && $1 !~ /^#/ {print $1}' requirements-optional.txt | grep -vi '^playwright' || true)
 fi
 
@@ -87,4 +87,4 @@ print("All critical imports succeeded.")
 PY
 
 info "Dependency installation complete."
-echo "Run next: bash /home/runner/work/D.L/D.L/termux-setup.sh"
+echo "Run next: bash \"$REPO_ROOT/termux-setup.sh\""
