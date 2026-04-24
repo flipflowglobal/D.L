@@ -1,0 +1,12 @@
+Collecting pdoc
+  Downloading pdoc-16.0.0-py3-none-any.whl.metadata (8.6 kB)
+Requirement already satisfied: Jinja2>=2.11.0 in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (from pdoc) (3.1.6)
+Requirement already satisfied: pygments>=2.12.0 in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (from pdoc) (2.20.0)
+Requirement already satisfied: MarkupSafe>=1.1.1 in /opt/hostedtoolcache/Python/3.11.15/x64/lib/python3.11/site-packages (from pdoc) (3.0.3)
+Collecting markdown2>=2.5.4 (from pdoc)
+  Downloading markdown2-2.5.5-py3-none-any.whl.metadata (2.1 kB)
+Downloading pdoc-16.0.0-py3-none-any.whl (100 kB)
+Downloading markdown2-2.5.5-py3-none-any.whl (56 kB)
+Installing collected packages: markdown2, pdoc
+
+Successfully installed markdown2-2.5.5 pdoc-16.0.0
