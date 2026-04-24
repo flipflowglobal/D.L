@@ -307,7 +307,20 @@ impl<'a> SymExec<'a> {
             0x19 => { let a=stack.pop(); stack.push(Val::unop(UnOpKind::Not,a)); }
             0x1a => { let a=stack.pop(); let b=stack.pop(); stack.push(Val::binop(BinOpKind::Byte,a,b)); }
             0x1b => { let a=stack.pop(); let b=stack.pop(); stack.push(Val::binop(BinOpKind::Shl,a,b)); }
-            0x1c => { let a=stack.pop(); let b=stack.pop(); stack.push(Val::binop(BinOpKind::Shr,a,b)); }
+            0x1c => {
+                let a = stack.pop(); // shift amount
+                let b = stack.pop(); // value to shift
+                // Detect SHR(96, calldata[N]) — the canonical ABI pattern for
+                // extracting a right-aligned address from a 32-byte calldata word.
+                if let Val::Const(96) = &a {
+                    if let Val::Sym(s) = &b {
+                        if s.starts_with("calldata[") {
+                            self.type_ctx.record_param(0, EvmType::Address);
+                        }
+                    }
+                }
+                stack.push(Val::binop(BinOpKind::Shr, a, b));
+            }
             0x1d => { let a=stack.pop(); let b=stack.pop(); stack.push(Val::binop(BinOpKind::Sar,a,b)); }
             // ── KECCAK256 ───────────────────────────────────────────────
             0x20 => { let a=stack.pop(); let _b=stack.pop(); stack.push(Val::Keccak(Box::new(a))); }
@@ -319,12 +332,6 @@ impl<'a> SymExec<'a> {
             0x34 => stack.push(Val::CallValue),
             0x35 => {
                 let off = stack.pop();
-                // Infer type from SHR 96 pattern (address extraction)
-                if let Val::BinOp { op: BinOpKind::Shr, lhs, .. } = &off {
-                    if let Val::Const(96) = lhs.as_ref() {
-                        self.type_ctx.record_param(0, EvmType::Address);
-                    }
-                }
                 stack.push(Val::Sym(format!("calldata[{}]", off.display())));
             }
             0x36 => stack.push(Val::Sym("calldatasize".into())),

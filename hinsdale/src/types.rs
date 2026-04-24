@@ -93,22 +93,12 @@ impl TypeCtx {
     }
 
     pub fn to_storage_vars(&self) -> Vec<StorageVar> {
-        let slot_names: FxHashMap<u64, (&str, EvmType)> = [
-            (0, ("owner",       EvmType::Address)),
-            (1, ("profitWallet",EvmType::Address)),
-            (2, ("totalSupply", EvmType::Uint(256))),
-            (5, ("paused",      EvmType::Bool)),
-        ].iter().cloned().collect();
-
         let mut vars: Vec<StorageVar> = self.storage.iter().map(|(&slot, (ty, r, w))| {
-            let (name, inferred) = slot_names.get(&slot)
-                .map(|(n, t)| (n.to_string(), t.clone()))
-                .unwrap_or_else(|| (format!("_slot{slot}"), ty.clone()));
             StorageVar {
                 slot,
-                name,
-                ty: if *ty == EvmType::Unknown { inferred } else { ty.clone() },
-                reads: *r,
+                name:   format!("_slot{slot}"),
+                ty:     ty.clone(),
+                reads:  *r,
                 writes: *w,
             }
         }).collect();

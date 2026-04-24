@@ -144,23 +144,34 @@ async def build_rust_hinsdale() -> dict:
         err = stderr.decode(errors="replace")[-800:]
         return _fail("rust/hinsdale", f"exit {proc.returncode}\n{err}", t0)
 
-    cli_binary = HINSDALE_CRATE / "target" / "release" / "hinsdale-cli"
+    # Windows produces hinsdale-cli.exe; Linux/macOS produces hinsdale-cli
+    cli_binary = HINSDALE_CRATE / "target" / "release" / "hinsdale-cli.exe"
+    if not cli_binary.exists():
+        cli_binary = HINSDALE_CRATE / "target" / "release" / "hinsdale-cli"
     if not cli_binary.exists():
         return _fail("rust/hinsdale", "hinsdale-cli binary not found after build", t0)
 
     size_mb = cli_binary.stat().st_size / 1_048_576
     RUST_D.mkdir(parents=True, exist_ok=True)
-    dest = RUST_D / "hinsdale-cli"
+    dest = RUST_D / cli_binary.name  # preserves .exe on Windows
     shutil.copy2(cli_binary, dest)
-    dest.chmod(0o755)
+    if not dest.suffix == ".exe":
+        dest.chmod(0o755)
 
-    # Also collect the cdylib if present (for Python FFI via ctypes/Cython)
+    # Also collect the cdylib if present (for Python FFI via ctypes/Cython).
+    # On Linux/macOS the output is libhinsdale.so/.dylib; on Windows Rust cdylib
+    # drops the "lib" prefix and produces hinsdale.dll (no lib prefix).
     cdylib_extras = {}
-    for suffix in (".so", ".dylib", ".dll"):
-        cdylib = HINSDALE_CRATE / "target" / "release" / f"libhinsdale{suffix}"
-        if cdylib.exists():
-            shutil.copy2(cdylib, RUST_D / cdylib.name)
-            cdylib_extras["cdylib"] = str(RUST_D / cdylib.name)
+    release_dir = HINSDALE_CRATE / "target" / "release"
+    for candidate in [
+        release_dir / "libhinsdale.so",
+        release_dir / "libhinsdale.dylib",
+        release_dir / "hinsdale.dll",      # Windows (no lib prefix)
+        release_dir / "libhinsdale.dll",   # fallback
+    ]:
+        if candidate.exists():
+            shutil.copy2(candidate, RUST_D / candidate.name)
+            cdylib_extras["cdylib"] = str(RUST_D / candidate.name)
             break
 
     elapsed = time.monotonic() - t0

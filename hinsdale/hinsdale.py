@@ -41,7 +41,7 @@ _BINARY_ALT = Path(shutil.which("hinsdale-cli") or "") if shutil.which("hinsdale
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Data classes (mirror Rust structs exactly)
+# Data classes for the Rust JSON output (not guaranteed to be exact 1:1 mirrors)
 # ══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
@@ -262,10 +262,46 @@ def _parse_report(data: dict) -> HinsdaleReport:
         risk_score        = se.get("risk_score", 0),
     )
 
+    def _fmt_ty(ty: object) -> str:
+        """Normalize a Rust-serialized EvmType enum value to a readable string."""
+        if ty is None:
+            return "?"
+        if isinstance(ty, bool):
+            return "bool"
+        if isinstance(ty, (int, float)):
+            return str(ty)
+        if isinstance(ty, str):
+            return ty
+        if isinstance(ty, list):
+            return "(" + ", ".join(_fmt_ty(i) for i in ty) + ")"
+        if isinstance(ty, dict) and len(ty) == 1:
+            kind, val = next(iter(ty.items()))
+            if kind == "Uint":       return f"uint{val}"
+            if kind == "Int":        return f"int{val}"
+            if kind == "Bytes":      return f"bytes{val}"
+            if kind == "Address":    return "address"
+            if kind == "Bool":       return "bool"
+            if kind == "String":     return "string"
+            if kind == "DynamicBytes": return "bytes"
+            if kind == "Unknown":    return "?"
+            if kind == "Array":      return f"{_fmt_ty(val)}[]"
+            if kind == "FixedArray" and isinstance(val, dict):
+                inner = val.get("ty") or val.get("inner") or val.get("element")
+                size  = val.get("size") or val.get("len") or "?"
+                return f"{_fmt_ty(inner)}[{size}]"
+            if kind == "Mapping" and isinstance(val, dict):
+                k = val.get("key") or val.get("from", "?")
+                v = val.get("value") or val.get("to", "?")
+                return f"mapping({_fmt_ty(k)} => {_fmt_ty(v)})"
+            if kind == "Tuple":
+                items = val if isinstance(val, list) else [val]
+                return "(" + ", ".join(_fmt_ty(i) for i in items) + ")"
+        return json.dumps(ty, sort_keys=True)
+
     storage_slots = [
         StorageSlot(
             slot   = s.get("slot", 0),
-            usages = s.get("usages") or [s.get("ty", "?")],
+            usages = [_fmt_ty(u) for u in (s.get("usages") or [s.get("ty", "?")])]
         )
         for s in dc.get("storage_vars") or dc.get("storage_slots") or []
     ]

@@ -281,7 +281,7 @@ python DL_SYSTEM/main.py                      # quest automation subsystem
 
 ## Build System
 
-AUREON uses a parallel async build orchestrator (`build.py`) that compiles four pipelines simultaneously.
+AUREON uses a parallel async build orchestrator (`build.py`) that compiles five pipelines simultaneously.
 
 ### Run Full Build
 
@@ -293,7 +293,7 @@ Output — `build/report.json`:
 ```json
 {
   "wall_clock_seconds": 1.66,
-  "pipelines": { "cython": "ok", "rust_dex": "ok", "rust_tx": "ok", "solidity": "ok" }
+  "pipelines": { "cython": "ok", "rust_dex": "ok", "rust_tx": "ok", "rust_hinsdale": "ok", "solidity": "ok" }
 }
 ```
 
@@ -313,6 +313,7 @@ python build.py --clean      # Remove all build artifacts
 | **Cython** | `engine/portfolio.pyx`, `risk_manager.pyx`, `strategies/mean_reversion.pyx` | `build/cython/*.so` | ~1.5s |
 | **Rust dex-oracle** | `dex-oracle/src/` | `dex-oracle/target/release/dex-oracle` (6.9 MB) | ~30s cold / cached |
 | **Rust tx-engine** | `tx-engine/src/` | `tx-engine/target/release/tx-engine` (6.6 MB) | ~30s cold / cached |
+| **Rust hinsdale** | `hinsdale/src/` | `build/rust/hinsdale-cli` (0.5 MB) + `libhinsdale.so` | ~20s cold / cached |
 | **Solidity** | `contracts/FlashLoanArbitrage.sol` | `build/solidity/*.abi`, `*.bin` | ~0.3s |
 
 ### Cython Optimisation Flags
