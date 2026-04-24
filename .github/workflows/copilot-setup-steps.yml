@@ -307,20 +307,10 @@ jobs:
             echo "PYTHONWARNINGS=ignore::DeprecationWarning"
           } >> "$GITHUB_ENV"
 
-      # ── 11. pytest.ini — extend with timeout + markers ─────────────────────
-      - name: Extend pytest.ini with CI settings
+      # ── 11. pytest CI flags via env var (avoids duplicate pytest.ini keys) ──
+      - name: Set PYTEST_ADDOPTS for CI
         run: |
-          # Append CI-specific settings to existing pytest.ini
-          cat >> pytest.ini << 'INI'
-
-          # CI additions (written by copilot-setup-steps)
-          addopts = -q --tb=short --timeout=30 --strict-markers
-          timeout = 30
-          markers =
-              mainnet: live mainnet test — requires RPC_URL and PRIVATE_KEY
-              slow: test takes more than 5 s
-              integration: requires external services
-          INI
+          echo "PYTEST_ADDOPTS=--timeout=30" >> "$GITHUB_ENV"
 
       # ── 12. Playwright browsers (for DL_SYSTEM quest tasks) ───────────────
       - name: Install Playwright browsers
