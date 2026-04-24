@@ -117,17 +117,6 @@ class _MockRequestsResponse:
         if self.status_code >= 400:
             raise Exception(f"HTTP {self.status_code}")
 
-
-def _patched_requests_get(url: str, *args, **kwargs) -> _MockRequestsResponse:
-    """Drop-in replacement for requests.get for blocked hosts."""
-    from urllib.parse import urlparse
-    host = urlparse(url).hostname or ""
-    if host in _BLOCKED_HOSTS:
-        return _MockRequestsResponse(_mock_response_for(url))
-    # Let through unblocked hosts (localhost, etc.)
-    return _real_requests_get(url, *args, **kwargs)
-
-
 # ── httpx mock ────────────────────────────────────────────────────────────────
 
 class _MockHttpxResponse:
