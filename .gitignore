@@ -34,6 +34,10 @@ env/
 # Build artifacts — Rust
 dex-oracle/target/
 tx-engine/target/
+hinsdale/target/
+
+# Accidental pip install logs (=<version> files)
+=*
 
 # Build output directory
 build/
