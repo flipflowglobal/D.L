@@ -41,7 +41,7 @@ _BINARY_ALT = Path(shutil.which("hinsdale-cli") or "") if shutil.which("hinsdale
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Data classes (mirror Rust structs)
+# Data classes (mirror Rust structs exactly)
 # ══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
@@ -77,28 +77,29 @@ class CfgSummary:
 
 @dataclass
 class FunctionSig:
-    selector:     str
-    selector_u32: int
-    known_name:   Optional[str]
-    jump_target:  Optional[int]
-    is_view:      bool
+    """Mirrors Rust FunctionSignature: selector, offset, known_name, signature."""
+    selector:   str
+    offset:     int
+    known_name: Optional[str]
+    signature:  Optional[str]
 
 
 @dataclass
 class SignatureReport:
-    functions:       list[FunctionSig]
-    event_topics:    list[str]
-    has_dispatcher:  bool
-    fallback_offset: Optional[int]
+    """Mirrors Rust SignatureReport: functions, selector_count, resolved_count."""
+    functions:      list[FunctionSig]
+    selector_count: int
+    resolved_count: int
 
 
 @dataclass
 class Finding:
-    severity:    str
+    """Mirrors Rust SecurityFinding: id, title, severity, offset, description."""
+    id:          str
     title:       str
-    description: str
+    severity:    str
     offset:      Optional[int]
-    pattern:     str
+    description: str
 
     def __str__(self):
         loc = f"0x{self.offset:04x}" if self.offset is not None else "—"
@@ -107,15 +108,16 @@ class Finding:
 
 @dataclass
 class SecurityReport:
-    findings:         list[Finding]
-    has_selfdestruct: bool
-    has_delegatecall: bool
-    has_create2:      bool
-    has_staticcall:   bool
-    sstore_count:     int
-    sload_count:      int
-    call_count:       int
-    risk_score:       int
+    """Mirrors Rust SecurityReport."""
+    findings:          list[Finding]
+    has_selfdestruct:  bool
+    has_delegatecall:  bool
+    has_create2:       bool
+    has_tx_origin:     bool
+    has_timestamp_dep: bool
+    has_reenter_risk:  bool
+    has_unchecked_ret: bool
+    risk_score:        int
 
 
 @dataclass
@@ -126,7 +128,7 @@ class StorageSlot:
 
 @dataclass
 class DecompiledOutput:
-    pseudo_source: str
+    pseudo_source: str          # maps to Rust "pseudo_code"
     functions:     list[dict]
     storage_slots: list[StorageSlot]
 
@@ -223,52 +225,51 @@ def _parse_report(data: dict) -> HinsdaleReport:
 
     functions = [
         FunctionSig(
-            selector     = f["selector"],
-            selector_u32 = f["selector_u32"],
-            known_name   = f.get("known_name"),
-            jump_target  = f.get("jump_target"),
-            is_view      = f.get("is_view", False),
+            selector   = f["selector"],
+            offset     = f.get("offset", 0),
+            known_name = f.get("known_name"),
+            signature  = f.get("signature"),
         )
         for f in sg["functions"]
     ]
 
     sigs = SignatureReport(
-        functions       = functions,
-        event_topics    = sg["event_topics"],
-        has_dispatcher  = sg["has_dispatcher"],
-        fallback_offset = sg.get("fallback_offset"),
+        functions      = functions,
+        selector_count = sg.get("selector_count", len(functions)),
+        resolved_count = sg.get("resolved_count", 0),
     )
 
     findings = [
         Finding(
-            severity    = fi["severity"],
-            title       = fi["title"],
-            description = fi["description"],
+            id          = fi.get("id", "UNKNOWN"),
+            title       = fi.get("title", fi.get("id", "Unknown")),
+            severity    = str(fi.get("severity", "Info")),
             offset      = fi.get("offset"),
-            pattern     = fi["pattern"],
+            description = fi.get("description", ""),
         )
         for fi in se["findings"]
     ]
 
     security = SecurityReport(
-        findings         = findings,
-        has_selfdestruct = se["has_selfdestruct"],
-        has_delegatecall = se["has_delegatecall"],
-        has_create2      = se["has_create2"],
-        has_staticcall   = se["has_staticcall"],
-        sstore_count     = se["sstore_count"],
-        sload_count      = se["sload_count"],
-        call_count       = se["call_count"],
-        risk_score       = se["risk_score"],
+        findings          = findings,
+        has_selfdestruct  = se.get("has_selfdestruct", False),
+        has_delegatecall  = se.get("has_delegatecall", False),
+        has_create2       = se.get("has_create2", False),
+        has_tx_origin     = se.get("has_tx_origin", False),
+        has_timestamp_dep = se.get("has_timestamp_dep", False),
+        has_reenter_risk  = se.get("has_reenter_risk", False),
+        has_unchecked_ret = se.get("has_unchecked_ret", False),
+        risk_score        = se.get("risk_score", 0),
     )
 
     storage_slots = [
-        StorageSlot(slot=s["slot"], usages=s.get("usages", [s.get("ty","?")]))
-        for s in dc.get("storage_slots", [])
+        StorageSlot(slot=s.get("slot", 0), usages=s.get("usages", [s.get("ty", "?")]))
+        for s in dc.get("storage_vars", dc.get("storage_slots", []))
     ]
 
     decompiled = DecompiledOutput(
-        pseudo_source = dc["pseudo_source"],
+        # Rust emits "pseudo_code"; fall back to "pseudo_source" for forward compat
+        pseudo_source = dc.get("pseudo_code", dc.get("pseudo_source", "")),
         functions     = dc.get("functions", []),
         storage_slots = storage_slots,
     )
@@ -362,7 +363,7 @@ def _py_fallback(bytecode: bytes) -> HinsdaleReport:
         total_bytes=len(bytecode), instruction_count=len(instrs),
     )
 
-    # Basic selector scan
+    # Basic selector scan (PUSH4 followed by EQ + JUMPI)
     functions = []
     for i, ins in enumerate(instrs):
         if ins.opcode == 0x63 and ins.imm_u256 is not None:
@@ -370,43 +371,54 @@ def _py_fallback(bytecode: bytes) -> HinsdaleReport:
             nearby = instrs[i+1:i+6]
             if any(x.opcode == 0x14 for x in nearby) and any(x.opcode == 0x57 for x in nearby):
                 functions.append(FunctionSig(
-                    selector=f"0x{sel:08x}", selector_u32=sel,
-                    known_name=None, jump_target=None, is_view=False,
+                    selector=f"0x{sel:08x}", offset=ins.offset,
+                    known_name=None, signature=None,
                 ))
 
-    sigs = SignatureReport(functions=functions, event_topics=[],
-                           has_dispatcher=bool(functions), fallback_offset=None)
+    sigs = SignatureReport(
+        functions=functions,
+        selector_count=len(functions),
+        resolved_count=0,
+    )
 
     findings = []
     has_sd = any(x.opcode == 0xff for x in instrs)
     has_dc = any(x.opcode == 0xf4 for x in instrs)
     if has_sd:
-        findings.append(Finding("CRITICAL","SELFDESTRUCT","Contract can self-destruct",None,"SELFDESTRUCT"))
+        findings.append(Finding("SELFDESTRUCT", "SELFDESTRUCT", "Critical",
+                                None, "Contract can self-destruct"))
     if has_dc:
-        findings.append(Finding("HIGH","DELEGATECALL","DELEGATECALL present",None,"DELEGATECALL"))
+        findings.append(Finding("DELEGATECALL", "DELEGATECALL", "High",
+                                None, "DELEGATECALL present"))
 
     security = SecurityReport(
-        findings=findings, has_selfdestruct=has_sd, has_delegatecall=has_dc,
-        has_create2=any(x.opcode==0xf5 for x in instrs),
-        has_staticcall=any(x.opcode==0xfa for x in instrs),
-        sstore_count=sum(1 for x in instrs if x.opcode==0x55),
-        sload_count =sum(1 for x in instrs if x.opcode==0x54),
-        call_count  =sum(1 for x in instrs if x.opcode==0xf1),
-        risk_score  =min(len(findings)*15, 100),
+        findings=findings,
+        has_selfdestruct=has_sd,
+        has_delegatecall=has_dc,
+        has_create2=any(x.opcode == 0xf5 for x in instrs),
+        has_tx_origin=False,
+        has_timestamp_dep=any(x.opcode == 0x42 for x in instrs),
+        has_reenter_risk=False,
+        has_unchecked_ret=False,
+        risk_score=min(len(findings) * 15, 100),
     )
 
     elapsed_ms = (time.monotonic() - t0) * 1000
 
     return HinsdaleReport(
         metadata=Metadata(
-            bytecode_len=len(bytecode), is_runtime=len(bytecode)>2 and bytecode[0]==0x60 and bytecode[1]==0x80,
-            solc_version_hint=None, is_proxy=False, is_erc20_like=False, is_erc721_like=False,
+            bytecode_len=len(bytecode),
+            is_runtime=len(bytecode) > 2 and bytecode[0] == 0x60 and bytecode[1] == 0x80,
+            solc_version_hint=None, is_proxy=False,
+            is_erc20_like=False, is_erc721_like=False,
         ),
         disassembly=disasm,
         cfg_summary=CfgSummary(0, 0, len(jumpdests)),
         signatures=sigs,
         security=security,
-        decompiled=DecompiledOutput("// [Python fallback — compile Rust binary for full output]", [], []),
+        decompiled=DecompiledOutput(
+            "// [Python fallback — compile Rust binary for full output]", [], []
+        ),
         elapsed_ms=elapsed_ms,
         raw={},
     )
@@ -475,7 +487,7 @@ class Hinsdale:
 
     def _run_rust(self, raw: bytes) -> HinsdaleReport:
         hex_str = raw.hex()
-        cmd = [self._binary, "--json", hex_str]
+        cmd = [self._binary, hex_str]
         try:
             result = subprocess.run(
                 cmd,
@@ -500,7 +512,7 @@ class Hinsdale:
         return self.analyze(bytecode).signatures.functions
 
     def security(self, bytecode: str | bytes) -> SecurityReport:
-        """Return security report."""
+        """Return security analysis."""
         return self.analyze(bytecode).security
 
 
@@ -509,88 +521,50 @@ class Hinsdale:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _cli():
-    parser = argparse.ArgumentParser(
-        description="Hinsdale EVM Decompiler",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("bytecode", nargs="?", help="Hex bytecode string")
-    parser.add_argument("--file",        help="Binary .bin file")
-    parser.add_argument("--hex-file",    help="Hex text file")
-    parser.add_argument("--json",        action="store_true", help="JSON output")
-    parser.add_argument("--disasm-only", action="store_true")
-    parser.add_argument("--sigs-only",   action="store_true")
-    parser.add_argument("--security-only", action="store_true")
-    parser.add_argument("--summary",     action="store_true")
-    parser.add_argument("--binary",      help="Path to hinsdale-cli binary")
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(description="Hinsdale EVM decompiler — Python interface")
+    p.add_argument("hex", nargs="?", help="Bytecode hex string")
+    p.add_argument("--file", help="Binary .bin or hex .hex file")
+    p.add_argument("--security-only", action="store_true")
+    p.add_argument("--sigs-only", action="store_true")
+    p.add_argument("--disasm-only", action="store_true")
+    p.add_argument("--json", action="store_true", help="Output raw JSON")
+    args = p.parse_args()
 
-    h = Hinsdale(binary=args.binary)
-    print(f"[HINSDALE] Backend: {h.backend}", file=sys.stderr)
+    h = Hinsdale()
 
-    # Get bytecode
     if args.file:
-        report = h.analyze_file(args.file)
-    elif args.hex_file:
-        report = h.analyze(Path(args.hex_file).read_text())
-    elif args.bytecode:
-        report = h.analyze(args.bytecode)
+        r = h.analyze_file(args.file)
+    elif args.hex:
+        r = h.analyze(args.hex)
     else:
-        data = sys.stdin.read().strip()
-        if not data:
-            parser.print_help()
-            sys.exit(1)
-        report = h.analyze(data)
+        import sys as _sys
+        raw = _sys.stdin.buffer.read()
+        r = h.analyze(raw.hex())
 
     if args.json:
-        import dataclasses
-        print(json.dumps(report.raw or {
-            "summary": report.summary(),
-            "pseudo_source": report.pseudo_source,
-        }, indent=2))
-        return
-
-    if args.summary:
-        print(report.summary())
-        return
-
-    # Default: print everything relevant
-    print()
-    print("╔══════════════════════════════════════════════════════════════════╗")
-    print("║            HINSDALE EVM DECOMPILER — PYTHON INTERFACE           ║")
-    print("╚══════════════════════════════════════════════════════════════════╝")
-    print()
-    print(report.summary())
-    print()
-
-    if args.disasm_only:
-        for ins in report.disassembly.instructions:
-            marker = "◆" if ins.opcode == 0x5b else " "
-            print(f"  {marker} {ins}")
-        return
-
-    if args.sigs_only or not args.security_only:
-        print("── FUNCTION SIGNATURES ──────────────────────────────────────────")
-        if not report.signatures.functions:
-            print("  (none detected)")
-        for f in report.signatures.functions:
-            name = f.known_name or "???"
-            tgt  = f"→ 0x{f.jump_target:04x}" if f.jump_target else "→ ?"
-            print(f"  {f.selector}  {tgt}  {name}")
-        print()
-        if args.sigs_only:
-            return
-
-    print("── SECURITY ANALYSIS ────────────────────────────────────────────")
-    print(f"  Risk: {report.risk_score}/100")
-    for finding in report.findings:
-        print(f"  {finding}")
-    print()
-
-    if args.security_only:
-        return
-
-    print("── PSEUDO-SOLIDITY ──────────────────────────────────────────────")
-    print(report.pseudo_source)
+        print(json.dumps(r.raw, indent=2))
+    elif args.security_only:
+        for f in r.findings:
+            print(f)
+    elif args.sigs_only:
+        for f in r.signatures.functions:
+            print(f.selector, f.known_name or "?", f.signature or "")
+    elif args.disasm_only:
+        for i in r.disassembly.instructions:
+            print(i)
+    else:
+        print(r.summary())
+        if r.findings:
+            print("\nSecurity findings:")
+            for f in r.findings:
+                print(f" {f}")
+        if r.signatures.functions:
+            print("\nFunction signatures:")
+            for f in r.signatures.functions:
+                name = f.known_name or "unknown"
+                print(f"  {f.selector}  {name}  {f.signature or ''}")
+        print("\nPseudo-source:")
+        print(r.pseudo_source)
 
 
 if __name__ == "__main__":
