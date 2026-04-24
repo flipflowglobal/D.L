@@ -8,10 +8,13 @@ fetch that market_data.py already performs in the same cycle.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Optional
 
 from engine.price_cache import price_cache
+
+logger = logging.getLogger("aureon.liquidity_monitor")
 
 
 class LiquidityMonitor:
@@ -77,8 +80,8 @@ class LiquidityMonitor:
                 prices = [v for v in data.values() if isinstance(v, (int, float)) and v > 0]
                 if prices:
                     return max(prices)   # use the best available price
-        except Exception:
-            pass   # sidecar not running — fall through to CoinGecko
+        except Exception as exc:
+            logger.debug("dex-oracle sidecar unavailable: %s", exc)
         return None
 
     # ── async ─────────────────────────────────────────────────────────────────
@@ -99,8 +102,8 @@ class LiquidityMonitor:
                     prices = [v for v in data.values() if isinstance(v, (int, float)) and v > 0]
                     if prices:
                         return max(prices)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("dex-oracle async unavailable: %s", exc)
 
         # Fallback: run sync get_price in executor (uses shared cache)
         loop = asyncio.get_running_loop()

@@ -13,6 +13,7 @@
 
 mod config;
 mod error;
+mod flash;
 mod routes;
 mod signer;
 
@@ -21,6 +22,7 @@ use std::time::Instant;
 
 use axum::{Router, routing::get, routing::post};
 use tokio::net::TcpListener;
+use axum::http::HeaderValue;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::info;
@@ -73,19 +75,26 @@ async fn main() -> anyhow::Result<()> {
         started: Arc::new(Instant::now()),
     };
 
-    // CORS — allow Python bot on same host
+    // CORS — restrict to localhost only (tx-engine is a local sidecar,
+    // it should never accept requests from external origins)
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin([
+            "http://127.0.0.1".parse::<HeaderValue>().unwrap(),
+            "http://localhost".parse::<HeaderValue>().unwrap(),
+            "http://127.0.0.1:8010".parse::<HeaderValue>().unwrap(),
+            "http://localhost:8010".parse::<HeaderValue>().unwrap(),
+        ])
         .allow_methods(Any)
         .allow_headers(Any);
 
     // Router
     let app = Router::new()
-        .route("/tx/send",     post(routes::send_eth))
-        .route("/tx/contract", post(routes::contract_call))
-        .route("/gas",         get(routes::gas_price))
-        .route("/health",      get(routes::health))
-        .route("/config",      get(routes::get_config))
+        .route("/tx/send",         post(routes::send_eth))
+        .route("/tx/contract",     post(routes::contract_call))
+        .route("/flash/initiate",  post(routes::flash_initiate))
+        .route("/gas",             get(routes::gas_price))
+        .route("/health",          get(routes::health))
+        .route("/config",          get(routes::get_config))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state);

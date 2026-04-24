@@ -17,6 +17,8 @@ import os
 import random
 from typing import Optional
 
+logger = logging.getLogger(__name__)
+
 from dotenv import load_dotenv
 
 from engine.price_cache import price_cache
@@ -46,6 +48,8 @@ class ArbitrageScanner:
         rpc_url=_UNSET,
         spread_threshold: float = 0.003,    # 0.3 % minimum spread
     ):
+        if spread_threshold <= 0:
+            raise ValueError(f"spread_threshold must be > 0, got {spread_threshold}")
         self.spread_threshold = spread_threshold
         self._uni   = None
         self._sushi = None
@@ -86,7 +90,8 @@ class ArbitrageScanner:
             return float(r.json()["ethereum"]["usd"])
         try:
             return price_cache.get(_fetch)
-        except Exception:
+        except Exception as exc:
+            logger.debug("CoinGecko price fetch failed: %s", exc)
             return None
 
     def _live_prices(self) -> dict:
@@ -189,6 +194,14 @@ class ArbitrageScanner:
         prices = await self.get_prices_async()
         return self._evaluate(prices)
 
+    async def scan_with_timeout(self, eth_price: float, timeout: float = 5.0) -> list:
+        """Scan with a hard timeout — returns [] on timeout to prevent cycle stalls."""
+        try:
+            return await asyncio.wait_for(self.scan_async(eth_price), timeout=timeout) or []
+        except asyncio.TimeoutError:
+            logger.warning("ArbitrageScanner.scan_async timed out after %.1fs", timeout)
+            return []
+
     # ── shared evaluation logic ───────────────────────────────────────────────
 
     def _evaluate(self, prices: dict) -> Optional[list]:
@@ -196,14 +209,14 @@ class ArbitrageScanner:
         Given a {dex_name: price} dict, find the best spread and return
         an opportunity list if it exceeds the threshold.
         """
-        if not prices:
+        if len(prices) < 2:
             return None
 
         min_dex = min(prices, key=prices.get)
         max_dex = max(prices, key=prices.get)
         low     = prices[min_dex]
         high    = prices[max_dex]
-        if low <= 0:
+        if low <= 0 or min_dex == max_dex:
             return None
         spread  = (high - low) / low
 
@@ -221,3 +234,23 @@ class ArbitrageScanner:
             }]
 
         return None
+
+    async def scan_bellman(self, w3=None) -> list:
+        """
+        Run the SPFA Bellman-Ford scanner with CLMM slippage + Monte Carlo.
+
+        Delegates to nexus_arb.bellman_ford.BellmanFordScanner.
+        Returns a list of ArbRoute objects sorted by net_profit_usd desc.
+        Falls back to empty list if nexus_arb is unavailable.
+        """
+        try:
+            from nexus_arb.bellman_ford import BellmanFordScanner
+            scanner = BellmanFordScanner(w3=w3)
+            routes  = await scanner.scan()
+            logger.info(
+                "BellmanFord scan: %d profitable route(s) found", len(routes)
+            )
+            return routes
+        except Exception as exc:
+            logger.debug("scan_bellman failed: %s", exc)
+            return []

@@ -23,11 +23,9 @@ Lifecycle
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import List, Optional
 
 from watchdog.agents.db_agent       import DatabaseAgent
 from watchdog.agents.file_agent     import FileAgent
@@ -36,7 +34,7 @@ from watchdog.agents.resource_agent import ResourceAgent
 from watchdog.agents.service_agent  import ServiceAgent
 from watchdog.agents.trade_agent    import TradeLoopAgent
 from watchdog.event_bus             import (
-    EventBus, EventSeverity, EventType, WatchdogEvent, event_bus,
+    EventBus, EventSeverity, WatchdogEvent, event_bus,
 )
 from watchdog.healing.actions       import HealEscalation, HealingStrategy, healing_strategy
 from watchdog.mind.sync             import SharedMind, shared_mind
@@ -96,6 +94,8 @@ class WatchdogKernel:
         self._critical_count  = 0
         self._heal_count      = 0
         self._consensus_rejects = 0
+        self._regime_clf      = None
+        self._current_regime: str = "unknown"
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -220,6 +220,34 @@ class WatchdogKernel:
             "Heal %s for %s", "SUCCESS" if success else "FAILED", event.agent_id,
         )
 
+    # ── Regime classification ─────────────────────────────────────────────────
+
+    def _init_regime_clf(self) -> None:
+        """Lazy-init HMM regime classifier (soft-fail)."""
+        try:
+            from nexus_arb.regime_classifier import RegimeClassifier
+            self._regime_clf = RegimeClassifier()
+        except Exception:
+            pass
+
+    def classify_regime(self, obs: list) -> str:
+        """
+        Feed a 3D market observation to the HMM regime classifier.
+
+        obs: [volatility_norm, spread_norm, volume_norm], all in [0, 1]
+        Returns: regime name string ('bull', 'bear', 'ranging', …)
+        """
+        if self._regime_clf is None:
+            self._init_regime_clf()
+        if self._regime_clf is None:
+            return self._current_regime
+        try:
+            result = self._regime_clf.classify_full(obs)
+            self._current_regime = result.regime
+        except Exception:
+            pass
+        return self._current_regime
+
     # ── Health snapshot ───────────────────────────────────────────────────────
 
     def health_snapshot(self) -> dict:
@@ -233,6 +261,7 @@ class WatchdogKernel:
             "critical_events":     self._critical_count,
             "heals_performed":     self._heal_count,
             "consensus_rejects":   self._consensus_rejects,
+            "current_regime":      self._current_regime,
             "bus_stats":           self.bus.stats,
             "severity_counts":     self.registry.counts_by_severity(),
             "heal_records":        self.strategy.snapshot(),

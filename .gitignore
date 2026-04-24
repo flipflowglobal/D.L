@@ -34,6 +34,35 @@ env/
 # Build artifacts — Rust
 dex-oracle/target/
 tx-engine/target/
+hinsdale/target/
+
+# Accidental pip install logs (=<version> files)
+=*
 
 # Build output directory
 build/
+vault/*.json
+vault/test_*.json
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Hot-swap generated symlinks
+*.live
+*.swapping
+
+# Cython annotation HTML
+*.html
+
+# pytest cache
+.pytest_cache/
+.cache/
+
+# Coverage
+.coverage
+htmlcov/
+
+# MyPy
+.mypy_cache/

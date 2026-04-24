@@ -21,17 +21,16 @@ Or run standalone:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from collections import deque
-from typing import Any, Deque, Dict, List, Optional
+from typing import Deque, List, Optional
 
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
-from watchdog.event_bus  import EventBus, EventSeverity, EventType, WatchdogEvent, event_bus
-from watchdog.kernel     import WatchdogKernel, kernel
+from watchdog.event_bus  import EventSeverity, EventType, WatchdogEvent, event_bus
+from watchdog.kernel     import kernel
 from watchdog.mind.sync  import shared_mind
 
 logger = logging.getLogger("watchdog.dashboard")
@@ -227,6 +226,81 @@ async def get_summary() -> dict:
         "severity_counts": snap["severity_counts"],
         "bus_stats":       snap["bus_stats"],
     }
+
+
+@router.get("/metrics", response_class=JSONResponse)
+async def prometheus_metrics() -> JSONResponse:
+    """
+    Prometheus-style metrics in text/plain exposition format.
+
+    Expose via a scrape target:
+        - job_name: aureon_watchdog
+          static_configs: [{targets: ["localhost:8010"]}]
+          metrics_path: /watchdog/metrics
+    """
+    snap   = kernel.health_snapshot()
+    mind   = shared_mind.global_snapshot()
+    heals  = kernel.healing_strategy.snapshot() if hasattr(kernel, "healing_strategy") else {}
+
+    lines: list[str] = [
+        "# HELP aureon_watchdog_agents_total Total registered watchdog agents",
+        "# TYPE aureon_watchdog_agents_total gauge",
+        f'aureon_watchdog_agents_total {snap.get("total_agents", 0)}',
+        "",
+        "# HELP aureon_watchdog_critical_events_total Critical events dispatched",
+        "# TYPE aureon_watchdog_critical_events_total counter",
+        f'aureon_watchdog_critical_events_total {snap.get("critical_events", 0)}',
+        "",
+        "# HELP aureon_watchdog_heals_total Heal attempts performed",
+        "# TYPE aureon_watchdog_heals_total counter",
+        f'aureon_watchdog_heals_total {snap.get("heals_performed", 0)}',
+        "",
+        "# HELP aureon_watchdog_consensus_rejects_total Consensus-rejected heal proposals",
+        "# TYPE aureon_watchdog_consensus_rejects_total counter",
+        f'aureon_watchdog_consensus_rejects_total {snap.get("consensus_rejects", 0)}',
+        "",
+        "# HELP aureon_watchdog_events_dispatched_total Events dispatched by event bus",
+        "# TYPE aureon_watchdog_events_dispatched_total counter",
+        f'aureon_watchdog_events_dispatched_total {snap.get("bus_stats", {}).get("events_dispatched", 0)}',
+        "",
+        "# HELP aureon_watchdog_agent_failures Agent consecutive failure count",
+        "# TYPE aureon_watchdog_agent_failures gauge",
+    ]
+
+    for info in snap.get("agents", []):
+        agent_id = info.get("agent_id", "unknown")
+        lines.append(
+            f'aureon_watchdog_agent_failures{{agent="{agent_id}"}} {info.get("failures", 0)}'
+        )
+
+    lines += [
+        "",
+        "# HELP aureon_watchdog_agent_checks_total Total check() calls per agent",
+        "# TYPE aureon_watchdog_agent_checks_total counter",
+    ]
+    for info in snap.get("agents", []):
+        agent_id = info.get("agent_id", "unknown")
+        lines.append(
+            f'aureon_watchdog_agent_checks_total{{agent="{agent_id}"}} {info.get("checks", 0)}'
+        )
+
+    lines += [
+        "",
+        "# HELP aureon_watchdog_mind_agents_connected Agents connected to SharedMind",
+        "# TYPE aureon_watchdog_mind_agents_connected gauge",
+        f'aureon_watchdog_mind_agents_connected {len(mind.get("agents", {}))}',
+        "",
+        "# HELP aureon_watchdog_healing_agents Agents currently in healing state",
+        "# TYPE aureon_watchdog_healing_agents gauge",
+        f'aureon_watchdog_healing_agents {sum(1 for v in mind.get("agents", {}).values() if v.get("state") == "healing")}',
+        "",
+    ]
+
+    text = "\n".join(lines)
+    return JSONResponse(
+        content=text,
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 # ── Standalone app (for running dashboard independently) ─────────────────────

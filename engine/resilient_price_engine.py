@@ -20,7 +20,8 @@ Key design decisions:
     of how many callers hit this simultaneously
   - Circuit breaker per source — broken source is skipped for CIRCUIT_OPEN_SECS
     before retrying, preventing latency pileup on a dead RPC
-  - All paths return the same dict shape: {"uniswap_v3": float, "sushiswap": float}
+  - All paths return the same base dict shape: {"uniswap_v3": float, "sushiswap": float}
+    and include {"kalman_filtered": float} when the optional Kalman filter is available
 """
 
 import asyncio
@@ -35,10 +36,21 @@ logger = logging.getLogger("aureon.price_engine")
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-FALLBACK_PRICE     = float(os.getenv("FALLBACK_ETH_PRICE", "2000.0"))
-RUST_TIMEOUT       = float(os.getenv("RUST_SIDECAR_TIMEOUT", "0.5"))   # 500ms
-PYTHON_RPC_TIMEOUT = float(os.getenv("PYTHON_RPC_TIMEOUT", "8.0"))
-CIRCUIT_OPEN_SECS  = float(os.getenv("CIRCUIT_OPEN_SECS", "30.0"))     # skip broken source
+def _safe_float_env(key: str, default: float) -> float:
+    """Parse a float from an environment variable, falling back to default on error."""
+    val = os.getenv(key)
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        logger.warning("Invalid %s=%r, using default %.1f", key, val, default)
+        return default
+
+FALLBACK_PRICE     = _safe_float_env("FALLBACK_ETH_PRICE", 2000.0)
+RUST_TIMEOUT       = _safe_float_env("RUST_SIDECAR_TIMEOUT", 0.5)
+PYTHON_RPC_TIMEOUT = _safe_float_env("PYTHON_RPC_TIMEOUT", 8.0)
+CIRCUIT_OPEN_SECS  = _safe_float_env("CIRCUIT_OPEN_SECS", 30.0)
 
 
 class _CircuitBreaker:
@@ -101,6 +113,10 @@ class ResilientPriceEngine:
         # Shared price cache (singleton from engine/price_cache.py)
         self._cache = None
 
+        # Kalman filter for price smoothing (soft-fail)
+        self._kalman = None
+        self._filtered_price: float = 0.0
+
         self._stats = {
             "rust_hits":   0,
             "python_hits": 0,
@@ -121,22 +137,58 @@ class ResilientPriceEngine:
         prices = await self._try_rust()
         if prices:
             self._stats["rust_hits"] += 1
-            return prices
+            return await self._attach_kalman(prices)
 
         prices = await self._try_python_rpc()
         if prices:
             self._stats["python_hits"] += 1
-            return prices
+            return await self._attach_kalman(prices)
 
         prices = await self._try_coingecko()
         if prices:
             self._stats["gecko_hits"] += 1
-            return prices
+            return await self._attach_kalman(prices)
 
         # Layer 4: static fallback — always succeeds
         self._stats["fallback_hits"] += 1
         logger.error("ALL price sources failed — using static fallback $%.2f", FALLBACK_PRICE)
-        return {"uniswap_v3": FALLBACK_PRICE, "sushiswap": FALLBACK_PRICE}
+        return await self._attach_kalman(
+            {"uniswap_v3": FALLBACK_PRICE, "sushiswap": FALLBACK_PRICE}
+        )
+
+    def _select_kalman_reference_price(self, prices: dict) -> float:
+        """Select a deterministic reference price for Kalman smoothing."""
+        for key in ("uniswap_v3", "sushiswap"):
+            value = prices.get(key)
+            if value is not None:
+                return float(value)
+
+        for key in sorted(prices):
+            if key == "kalman_filtered":
+                continue
+            value = prices.get(key)
+            if value is not None:
+                return float(value)
+
+        raise StopIteration("no usable price entries found")
+
+    async def _attach_kalman(self, prices: dict) -> dict:
+        """Add a 'kalman_filtered' key with the IMM-UKF smoothed price."""
+        try:
+            if self._kalman is None:
+                from nexus_arb.kalman_filter import KalmanFilter
+                self._kalman = KalmanFilter()
+
+            ref = self._select_kalman_reference_price(prices)
+            state = await self._kalman.update(ref)
+            filtered_price = float(state.price_est)
+            self._filtered_price = filtered_price
+            prices["kalman_filtered"] = round(filtered_price, 4)
+        except ImportError as exc:
+            logger.debug("Kalman filter unavailable: %s", exc)
+        except (StopIteration, TypeError, ValueError, AttributeError) as exc:
+            logger.debug("Kalman filter update skipped: %s", exc)
+        return prices
 
     def stats(self) -> dict:
         s = dict(self._stats)
@@ -196,12 +248,16 @@ class ResilientPriceEngine:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             prices  = {}
 
-            if self._uni and len(results) > 0 and not isinstance(results[0], Exception):
-                prices["uniswap_v3"] = results[0]
+            if self._uni and len(results) > 0:
+                r = results[0]
+                if isinstance(r, (int, float)) and not isinstance(r, bool) and r > 0:
+                    prices["uniswap_v3"] = float(r)
             if self._sushi:
                 idx = 1 if self._uni else 0
-                if len(results) > idx and not isinstance(results[idx], Exception):
-                    prices["sushiswap"] = results[idx]
+                if len(results) > idx:
+                    r = results[idx]
+                    if isinstance(r, (int, float)) and not isinstance(r, bool) and r > 0:
+                        prices["sushiswap"] = float(r)
 
             if prices:
                 self._cb_python.record_success()
@@ -286,5 +342,5 @@ class ResilientPriceEngine:
             try:
                 from engine.price_cache import price_cache
                 self._cache = price_cache
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Price cache init failed: %s", exc)

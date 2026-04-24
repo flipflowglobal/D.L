@@ -23,6 +23,10 @@ class MeanReversionStrategy:
     """
 
     def __init__(self, window: int = 10, threshold: float = 0.02) -> None:
+        if window < 1:
+            raise ValueError(f"window must be >= 1, got {window}")
+        if threshold <= 0:
+            raise ValueError(f"threshold must be > 0, got {threshold}")
         self.prices: deque[float] = deque(maxlen=window)
         self.threshold = threshold
 

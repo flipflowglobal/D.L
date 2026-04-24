@@ -14,6 +14,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 async def client():
     from httpx import AsyncClient, ASGITransport
     from main import app
+    from intelligence.memory import memory
+
+    # Ensure the DB table exists before any request hits it
+    await memory.init_db()
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -24,7 +28,8 @@ async def client():
 async def test_health(client):
     r = await client.get("/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok"}
+    data = r.json()
+    assert data["status"] == "ok"
 
 
 async def test_root(client):

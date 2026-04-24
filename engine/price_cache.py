@@ -97,10 +97,10 @@ class _PriceCache:
 
             # Fetch failed — use stale value if available, else fallback
             if self._price is not None:
-                logger.warning("Using stale price $%,.2f (fetch failed)", self._price)
+                logger.warning("Using stale price $%.2f (fetch failed)", self._price)
                 return self._price
 
-            logger.warning("No price available, using fallback $%,.2f", self._fallback)
+            logger.warning("No price available, using fallback $%.2f", self._fallback)
             return self._fallback
 
     def invalidate(self) -> None:

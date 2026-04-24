@@ -31,7 +31,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from watchdog.event_bus  import WatchdogEvent
 from watchdog.mind.shard import AgentShard

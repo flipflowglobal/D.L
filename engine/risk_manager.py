@@ -43,7 +43,8 @@ class RiskManager:
     @staticmethod
     def _today() -> int:
         """Return today's UTC date as an integer YYYYMMDD."""
-        return int(datetime.now(timezone.utc).strftime("%Y%m%d"))
+        now = datetime.now(timezone.utc)
+        return now.year * 10000 + now.month * 100 + now.day
 
     def _maybe_reset(self) -> None:
         """Auto-reset counter when the UTC calendar day rolls over."""
@@ -107,6 +108,11 @@ class RiskManager:
         self._maybe_reset()
         return self._trade_count
 
+    @trade_count.setter
+    def trade_count(self, value: int) -> None:
+        """Allow direct assignment for testing and external integrations."""
+        self._trade_count = value
+
     def status(self) -> dict:
         """Return a snapshot of current risk state."""
         self._maybe_reset()
@@ -116,3 +122,25 @@ class RiskManager:
             "max_position_usd": self.max_position_usd,
             "reset_day":        self._reset_day,
         }
+
+    def kelly_position_size(
+        self,
+        kelly_fraction: float,
+        capital_usd: float,
+        max_fraction: float = 0.25,
+    ) -> float:
+        """
+        Compute Kelly-sized position from a pre-computed Kelly fraction.
+
+        kelly_fraction: f* from BellmanFord MC (0–1), already quarter-Kelly
+        capital_usd:    available capital in USD
+        max_fraction:   hard cap as fraction of capital (default 25 %)
+        Returns:        position size in USD, capped at max_position_usd
+        """
+        f   = float(max(min(kelly_fraction, max_fraction), 0.0))
+        pos = f * float(capital_usd)
+        capped = min(pos, float(self.max_position_usd))
+        logger.debug(
+            "Kelly position: f=%.4f raw=%.2f capped=%.2f", f, pos, capped
+        )
+        return capped

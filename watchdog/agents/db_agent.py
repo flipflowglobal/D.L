@@ -13,7 +13,6 @@ Self-healing:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import shutil
 import time

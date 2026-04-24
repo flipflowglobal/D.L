@@ -1,0 +1,40 @@
+# ── Termux / Android requirements ─────────────────────────────────────────────
+# Use this file on Android Termux instead of requirements.txt:
+#   pip install -r requirements-termux.txt
+#
+# Differences from requirements.txt:
+#   - uvloop omitted   → not available on Android; code falls back to asyncio
+#   - py-solc-x added  → compiler.py auto-downloads ARM64 solc binary; if
+#                         py-solc-x install fails, compiler.py still works via
+#                         direct ARM solc binary, Remix API, or embedded bytecode
+#   - uvicorn (plain)  → avoids pulling uvloop as a transitive dependency via
+#                         the [standard] extra
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Core ──────────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+requests>=2.31.0
+httpx>=0.25.0
+
+# ── Blockchain ────────────────────────────────────────────────────────────────
+web3>=6.11.0
+eth-account>=0.10.0
+eth-abi>=4.0.0
+websockets<14.0
+
+# ── Solidity compiler (optional — compiler.py has 3 fallback layers) ─────────
+py-solc-x>=2.0.0
+
+# ── Async / persistence ───────────────────────────────────────────────────────
+aiosqlite>=0.19.0
+# uvloop omitted — import is guarded with try/except in main.py and trade.py
+
+# ── API server ────────────────────────────────────────────────────────────────
+fastapi>=0.104.0
+uvicorn>=0.24.0          # plain (no [standard]) to avoid uvloop transitive dep
+pydantic>=2.0.0
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+anyio>=4.0.0

@@ -15,7 +15,6 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -25,25 +24,34 @@ logger = logging.getLogger("aureon.memory")
 
 DB_PATH = str(Path(__file__).parent.parent / "aureon_memory.db")
 
+_CREATE_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS memory (
+        agent_id TEXT NOT NULL,
+        key      TEXT NOT NULL,
+        value    TEXT,
+        PRIMARY KEY (agent_id, key)
+    )
+"""
+
 
 class Memory:
     """Async SQLite key-value store for agent state."""
 
     def __init__(self) -> None:
         self.db_path = DB_PATH
+        self._db: Optional[aiosqlite.Connection] = None
+
+    async def _get_db(self) -> aiosqlite.Connection:
+        """Return the persistent connection, creating it if needed."""
+        if self._db is None:
+            self._db = await aiosqlite.connect(self.db_path)
+            await self._db.execute(_CREATE_TABLE_SQL)
+            await self._db.commit()
+        return self._db
 
     async def init_db(self) -> None:
-        """Create the memory table if it does not exist."""
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS memory (
-                    agent_id TEXT NOT NULL,
-                    key      TEXT NOT NULL,
-                    value    TEXT,
-                    PRIMARY KEY (agent_id, key)
-                )
-            """)
-            await db.commit()
+        """Ensure the database and table exist (called once at startup)."""
+        await self._get_db()
         logger.debug("Memory DB ready: %s", self.db_path)
 
     async def store(self, agent_id: str, key: str, value: str) -> None:
@@ -56,12 +64,12 @@ class Memory:
             value:    string value (caller must serialise complex types).
         """
         try:
-            async with aiosqlite.connect(self.db_path) as db:
-                await db.execute(
-                    "INSERT OR REPLACE INTO memory (agent_id, key, value) VALUES (?, ?, ?)",
-                    (agent_id, key, str(value)),
-                )
-                await db.commit()
+            db = await self._get_db()
+            await db.execute(
+                "INSERT OR REPLACE INTO memory (agent_id, key, value) VALUES (?, ?, ?)",
+                (agent_id, key, str(value)),
+            )
+            await db.commit()
         except Exception as exc:
             logger.error("memory.store(%s, %s) failed: %s", agent_id, key, exc)
 
@@ -77,13 +85,13 @@ class Memory:
             Stored string value, or None.
         """
         try:
-            async with aiosqlite.connect(self.db_path) as db:
-                async with db.execute(
-                    "SELECT value FROM memory WHERE agent_id = ? AND key = ?",
-                    (agent_id, key),
-                ) as cursor:
-                    row = await cursor.fetchone()
-                    return row[0] if row else None
+            db = await self._get_db()
+            async with db.execute(
+                "SELECT value FROM memory WHERE agent_id = ? AND key = ?",
+                (agent_id, key),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else None
         except Exception as exc:
             logger.error("memory.retrieve(%s, %s) failed: %s", agent_id, key, exc)
             return None
@@ -91,25 +99,25 @@ class Memory:
     async def delete(self, agent_id: str, key: str) -> None:
         """Delete a single key for *agent_id*."""
         try:
-            async with aiosqlite.connect(self.db_path) as db:
-                await db.execute(
-                    "DELETE FROM memory WHERE agent_id = ? AND key = ?",
-                    (agent_id, key),
-                )
-                await db.commit()
+            db = await self._get_db()
+            await db.execute(
+                "DELETE FROM memory WHERE agent_id = ? AND key = ?",
+                (agent_id, key),
+            )
+            await db.commit()
         except Exception as exc:
             logger.error("memory.delete(%s, %s) failed: %s", agent_id, key, exc)
 
     async def list_keys(self, agent_id: str) -> list[str]:
         """Return all keys stored for *agent_id*."""
         try:
-            async with aiosqlite.connect(self.db_path) as db:
-                async with db.execute(
-                    "SELECT key FROM memory WHERE agent_id = ? ORDER BY key",
-                    (agent_id,),
-                ) as cursor:
-                    rows = await cursor.fetchall()
-                    return [r[0] for r in rows]
+            db = await self._get_db()
+            async with db.execute(
+                "SELECT key FROM memory WHERE agent_id = ? ORDER BY key",
+                (agent_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [r[0] for r in rows]
         except Exception as exc:
             logger.error("memory.list_keys(%s) failed: %s", agent_id, exc)
             return []
@@ -117,11 +125,11 @@ class Memory:
     async def clear(self, agent_id: str) -> None:
         """Delete all keys for *agent_id*."""
         try:
-            async with aiosqlite.connect(self.db_path) as db:
-                await db.execute(
-                    "DELETE FROM memory WHERE agent_id = ?", (agent_id,)
-                )
-                await db.commit()
+            db = await self._get_db()
+            await db.execute(
+                "DELETE FROM memory WHERE agent_id = ?", (agent_id,)
+            )
+            await db.commit()
             logger.info("memory.clear: removed all keys for %s", agent_id)
         except Exception as exc:
             logger.error("memory.clear(%s) failed: %s", agent_id, exc)
@@ -129,16 +137,22 @@ class Memory:
     async def all(self, agent_id: str) -> dict[str, str]:
         """Return all (key, value) pairs for *agent_id* as a dict."""
         try:
-            async with aiosqlite.connect(self.db_path) as db:
-                async with db.execute(
-                    "SELECT key, value FROM memory WHERE agent_id = ? ORDER BY key",
-                    (agent_id,),
-                ) as cursor:
-                    rows = await cursor.fetchall()
-                    return {r[0]: r[1] for r in rows}
+            db = await self._get_db()
+            async with db.execute(
+                "SELECT key, value FROM memory WHERE agent_id = ? ORDER BY key",
+                (agent_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return {r[0]: r[1] for r in rows}
         except Exception as exc:
             logger.error("memory.all(%s) failed: %s", agent_id, exc)
             return {}
+
+    async def close(self) -> None:
+        """Close the persistent connection (called at shutdown)."""
+        if self._db is not None:
+            await self._db.close()
+            self._db = None
 
 
 # ── Module-level singleton ────────────────────────────────────────────────────

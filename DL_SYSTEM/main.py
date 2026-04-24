@@ -1,46 +1,23 @@
-"""
-DL_SYSTEM/main.py — DL_SYSTEM orchestrator entry point.
-
-Runs the task orchestration loop on a configurable interval.
-Handles SIGINT/SIGTERM for graceful shutdown.
-"""
-
-from __future__ import annotations
-
-import os
-import signal
 import sys
+import os
 import time
+import threading
 
-# Ensure DL_SYSTEM/ is always on the path regardless of how this is invoked
-sys.path.insert(0, os.path.dirname(__file__))
+# Ensure the repo root is on the path so DL_SYSTEM is importable as a package
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from core.orchestrator import Orchestrator
-
-CYCLE_INTERVAL = int(os.getenv("DL_CYCLE_INTERVAL", "600"))   # seconds between cycles
+from DL_SYSTEM.core.orchestrator import Orchestrator
 
 
-def main() -> None:
-    orchestrator = Orchestrator()
-    running = True
-
-    def _shutdown(sig, frame):
-        nonlocal running
-        print("\n[DL_SYSTEM] Shutdown requested — stopping after current cycle...")
-        running = False
-
-    signal.signal(signal.SIGINT,  _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
-
-    print(f"[DL_SYSTEM] Starting orchestrator (cycle every {CYCLE_INTERVAL}s)")
-
-    while running:
+def _run_loop(orchestrator: Orchestrator) -> None:
+    """Run orchestrator cycles in a dedicated background thread."""
+    while True:
         orchestrator.run_cycle()
-        if running:
-            time.sleep(CYCLE_INTERVAL)
-
-    print("[DL_SYSTEM] Stopped.")
+        time.sleep(600)
 
 
 if __name__ == "__main__":
-    main()
+    orchestrator = Orchestrator()
+    thread = threading.Thread(target=_run_loop, args=(orchestrator,), daemon=True)
+    thread.start()
+    thread.join()
