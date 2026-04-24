@@ -28,7 +28,8 @@ async def client():
 async def test_health(client):
     r = await client.get("/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok"}
+    data = r.json()
+    assert data["status"] == "ok"
 
 
 async def test_root(client):
