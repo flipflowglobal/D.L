@@ -196,7 +196,8 @@ pub fn analyze_security(disasm: &Disassembly) -> SecurityReport {
         }
     }
 
-    // Deduplicate by offset + id
+    // Deduplicate by offset + id — must sort first since dedup_by only removes adjacent duplicates
+    findings.sort_by(|a, b| a.id.cmp(&b.id).then(a.offset.cmp(&b.offset)));
     findings.dedup_by(|a, b| a.id == b.id && a.offset == b.offset);
 
     let risk_score = findings.iter().map(|f| match f.severity {

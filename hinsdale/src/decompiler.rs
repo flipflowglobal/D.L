@@ -1,8 +1,8 @@
 // src/decompiler.rs — High-level EVM decompiler using symbolic execution
 use crate::cfg::CFG;
 use crate::disasm::Disassembly;
-use crate::signatures::{FunctionSignature, SignatureReport};
-use crate::symbolic::{Stmt, SymExec, SymStack};
+use crate::signatures::SignatureReport;
+use crate::symbolic::{Stmt, SymExec};
 use crate::types::StorageVar;
 use serde::{Deserialize, Serialize};
 

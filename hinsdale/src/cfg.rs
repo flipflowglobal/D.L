@@ -1,5 +1,5 @@
 // src/cfg.rs — Control-Flow Graph over disassembled EVM code
-use crate::disasm::{Disassembly, Instruction};
+use crate::disasm::Disassembly;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
@@ -33,10 +33,6 @@ impl CFG {
 
 fn is_terminal(op: u8) -> bool { matches!(op, 0x00 | 0xf3 | 0xfd | 0xff | 0xfe) }
 fn is_jump(op: u8) -> bool { op == 0x56 || op == 0x57 }
-
-// Suppress unused-import warning — Instruction is used via disasm reference
-#[allow(dead_code)]
-fn _uses_instruction(_: &Instruction) {}
 
 pub fn build_cfg(disasm: &Disassembly) -> CFG {
     let instrs = &disasm.instructions;

@@ -13,7 +13,7 @@ pub struct DefiReport {
     pub defi_patterns:          Vec<String>,
 }
 
-pub fn analyze_defi(disasm: &Disassembly, sigs: &SignatureReport) -> DefiReport {
+pub fn analyze_defi(_disasm: &Disassembly, sigs: &SignatureReport) -> DefiReport {
     let mut patterns: Vec<String> = Vec::new();
 
     let is_flash_loan_receiver = sigs.functions.iter().any(|f| {
@@ -40,14 +40,6 @@ pub fn analyze_defi(disasm: &Disassembly, sigs: &SignatureReport) -> DefiReport 
         matches!(f.selector.as_str(), "0xc87b56dd"|"0xb88d4fde"|"0x6352211e")
     });
     if is_erc721 { patterns.push("ERC721".into()); }
-
-    // Flash loan pattern: CALL followed immediately by SLOAD (CEI check)
-    let instrs = &disasm.instructions;
-    let n = instrs.len();
-    for i in 0..n.saturating_sub(3) {
-        if instrs[i].opcode == 0x42b0b77c_u32 as u8 { continue; } // pseudo
-        // look for flashLoanSimple pattern bytes
-    }
 
     DefiReport {
         is_flash_loan_receiver,

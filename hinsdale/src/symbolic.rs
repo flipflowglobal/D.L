@@ -479,7 +479,7 @@ fn infer_type_from_val(val: &Val) -> EvmType {
     match val {
         Val::Caller | Val::Origin => EvmType::Address,
         Val::Const(v) if *v <= 1  => EvmType::Bool,
-        Val::Const(v) if *v <= 0xffff_ffff_ffff_ffffu64 => EvmType::Uint(256),
+        Val::Const(_) => EvmType::Uint(256),
         Val::BinOp { op: BinOpKind::And, rhs, .. } => {
             if let Val::Const(mask) = rhs.as_ref() {
                 match *mask {

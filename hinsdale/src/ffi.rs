@@ -9,9 +9,11 @@ pub extern "C" fn hinsdale_analyze(hex_ptr: *const c_char) -> *mut c_char {
     let result = match crate::parse_hex(&hex) {
         Ok(bytes) => {
             let report = crate::analyze(&bytes);
-            serde_json::to_string(&report).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
+            serde_json::to_string(&report).unwrap_or_else(|e| {
+                serde_json::json!({ "error": e.to_string() }).to_string()
+            })
         }
-        Err(e) => format!("{{\"error\":\"{e}\"}}"),
+        Err(e) => serde_json::json!({ "error": e }).to_string(),
     };
     CString::new(result).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }

@@ -1,6 +1,6 @@
 // src/disasm.rs — Linear-sweep disassembler with JUMPDEST map
 
-use crate::opcodes::{lookup, is_push, push_size};
+use crate::opcodes::{lookup, push_size};
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 

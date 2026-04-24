@@ -13,7 +13,6 @@ pub struct MevReport {
 
 pub fn analyze_mev(disasm: &Disassembly, sigs: &SignatureReport) -> MevReport {
     let instrs = &disasm.instructions;
-    let n = instrs.len();
     let mut patterns: Vec<String> = Vec::new();
 
     // Timestamp dependency → frontrun risk
