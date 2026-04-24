@@ -165,8 +165,10 @@ async def build_rust_hinsdale() -> dict:
 
     elapsed = time.monotonic() - t0
     log.info("[RUST/hinsdale] Done in %.1fs — CLI: %.1f MB", elapsed, size_mb)
-    return _ok("rust/hinsdale", elapsed, {"binary": str(dest), "size_mb": round(size_mb, 2),
-                                          **cdylib_extras})
+    extra = {"binary": str(dest), "size_mb": round(size_mb, 2)}
+    if cdylib_extras:
+        extra.update(cdylib_extras)
+    return _ok("rust/hinsdale", elapsed, extra)
 
 
 async def _build_rust_crate(name: str, crate_dir: Path) -> dict:

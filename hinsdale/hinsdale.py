@@ -263,8 +263,11 @@ def _parse_report(data: dict) -> HinsdaleReport:
     )
 
     storage_slots = [
-        StorageSlot(slot=s.get("slot", 0), usages=s.get("usages", [s.get("ty", "?")]))
-        for s in dc.get("storage_vars", dc.get("storage_slots", []))
+        StorageSlot(
+            slot   = s.get("slot", 0),
+            usages = s.get("usages") or [s.get("ty", "?")],
+        )
+        for s in dc.get("storage_vars") or dc.get("storage_slots") or []
     ]
 
     decompiled = DecompiledOutput(
@@ -385,11 +388,15 @@ def _py_fallback(bytecode: bytes) -> HinsdaleReport:
     has_sd = any(x.opcode == 0xff for x in instrs)
     has_dc = any(x.opcode == 0xf4 for x in instrs)
     if has_sd:
-        findings.append(Finding("SELFDESTRUCT", "SELFDESTRUCT", "Critical",
-                                None, "Contract can self-destruct"))
+        findings.append(Finding(
+            id="SELFDESTRUCT", title="SELFDESTRUCT", severity="Critical",
+            offset=None, description="Contract can self-destruct",
+        ))
     if has_dc:
-        findings.append(Finding("DELEGATECALL", "DELEGATECALL", "High",
-                                None, "DELEGATECALL present"))
+        findings.append(Finding(
+            id="DELEGATECALL", title="DELEGATECALL", severity="High",
+            offset=None, description="DELEGATECALL present",
+        ))
 
     security = SecurityReport(
         findings=findings,
