@@ -10,22 +10,23 @@
 1. [Architecture Overview](#architecture-overview)
 2. [Prerequisites](#prerequisites)
 3. [Installation](#installation)
-4. [Build System](#build-system)
-5. [Wallet Setup](#wallet-setup)
-6. [Configuration](#configuration)
-7. [Running the Trading Bot](#running-the-trading-bot)
-8. [Running the API Server](#running-the-api-server)
-9. [Watchdog Self-Healing System](#watchdog-self-healing-system)
-10. [Multi-Agent Swarm](#multi-agent-swarm)
-11. [API Reference](#api-reference)
-12. [Running DL_SYSTEM](#running-dl_system)
-13. [Smart Contracts](#smart-contracts)
-14. [Rust Sidecars](#rust-sidecars)
-15. [Docker Deployment](#docker-deployment)
-16. [Module Reference](#module-reference)
-17. [Security Checklist](#security-checklist)
-18. [Troubleshooting](#troubleshooting)
-19. [Project Status](#project-status)
+4. [Termux + SSH Setup (D.L.2 Branch)](#termux--ssh-setup-dl2-branch)
+5. [Build System](#build-system)
+6. [Wallet Setup](#wallet-setup)
+7. [Configuration](#configuration)
+8. [Running the Trading Bot](#running-the-trading-bot)
+9. [Running the API Server](#running-the-api-server)
+10. [Watchdog Self-Healing System](#watchdog-self-healing-system)
+11. [Multi-Agent Swarm](#multi-agent-swarm)
+12. [API Reference](#api-reference)
+13. [Running DL_SYSTEM](#running-dl_system)
+14. [Smart Contracts](#smart-contracts)
+15. [Rust Sidecars](#rust-sidecars)
+16. [Docker Deployment](#docker-deployment)
+17. [Module Reference](#module-reference)
+18. [Security Checklist](#security-checklist)
+19. [Troubleshooting](#troubleshooting)
+20. [Project Status](#project-status)
 
 ---
 
@@ -188,9 +189,99 @@ nano .env
 
 ---
 
+## Termux + SSH Setup (D.L.2 Branch)
+
+Use this section when running on Android Termux for branch **D.L.2**.
+
+### 1) Prerequisites (Termux)
+
+```bash
+# Install Termux from F-Droid, then:
+termux-setup-storage
+pkg update -y && pkg upgrade -y
+pkg install -y git openssh curl wget python rust clang make cmake pkg-config libffi openssl
+```
+
+### 2) Clone branch D.L.2 and enter repo
+
+```bash
+git clone -b D.L.2 https://github.com/flipflowglobal/D.L.git
+cd D.L
+```
+
+### 3) Install dependencies (recommended scripts)
+
+```bash
+# Installs Termux-safe system + Python dependencies
+bash termux-dependencies.sh
+
+# Full Termux setup (env, dirs, wallet prompt, optional compile/tests)
+bash termux-setup.sh
+```
+
+### 4) SSH install/start commands (Termux remote control)
+
+```bash
+pkg install -y openssh
+passwd                 # set Termux login password
+sshd                   # starts SSH server on port 8022 by default
+whoami                 # Termux username
+ip addr show wlan0     # phone IP on Wi-Fi
+```
+
+Connect from another machine:
+```bash
+ssh -p 8022 <termux_user>@<phone_ip>
+```
+
+### 5) Build / compile commands
+
+```bash
+# Full parallel build (Cython + Rust sidecars + Solidity)
+python build.py
+
+# Selective builds
+python build.py --rust
+python build.py --sol
+python build.py --cython
+
+# Solidity compile/deploy helpers
+python compiler.py --compile-only
+python compiler.py --deploy-only
+```
+
+### 6) Operate / run / control full system
+
+```bash
+# Integrity check only
+bash start_system.sh --check
+
+# Start full kernel + watchdog in foreground
+bash start_system.sh
+
+# Start full kernel + watchdog in background
+bash start_system.sh --daemon
+
+# Watch logs
+tail -f logs/kernel.log
+
+# Stop daemonized kernel
+kill "$(cat kernel.pid)"
+```
+
+Optional direct runtime commands:
+```bash
+python trade.py                               # paper trading bot
+DRY_RUN=false python trade.py --live          # live mode
+uvicorn main:app --host 0.0.0.0 --port 8010  # API server
+python DL_SYSTEM/main.py                      # quest automation subsystem
+```
+
+---
+
 ## Build System
 
-AUREON uses a parallel async build orchestrator (`build.py`) that compiles four pipelines simultaneously.
+AUREON uses a parallel async build orchestrator (`build.py`) that compiles five pipelines simultaneously.
 
 ### Run Full Build
 
@@ -202,7 +293,7 @@ Output — `build/report.json`:
 ```json
 {
   "wall_clock_seconds": 1.66,
-  "pipelines": { "cython": "ok", "rust_dex": "ok", "rust_tx": "ok", "solidity": "ok" }
+  "pipelines": { "cython": "ok", "rust_dex": "ok", "rust_tx": "ok", "rust_hinsdale": "ok", "solidity": "ok" }
 }
 ```
 
@@ -222,6 +313,7 @@ python build.py --clean      # Remove all build artifacts
 | **Cython** | `engine/portfolio.pyx`, `risk_manager.pyx`, `strategies/mean_reversion.pyx` | `build/cython/*.so` | ~1.5s |
 | **Rust dex-oracle** | `dex-oracle/src/` | `dex-oracle/target/release/dex-oracle` (6.9 MB) | ~30s cold / cached |
 | **Rust tx-engine** | `tx-engine/src/` | `tx-engine/target/release/tx-engine` (6.6 MB) | ~30s cold / cached |
+| **Rust hinsdale** | `hinsdale/src/` | `build/rust/hinsdale-cli` (0.5 MB) + `libhinsdale.so` | ~20s cold / cached |
 | **Solidity** | `contracts/FlashLoanArbitrage.sol` | `build/solidity/*.abi`, `*.bin` | ~0.3s |
 
 ### Cython Optimisation Flags

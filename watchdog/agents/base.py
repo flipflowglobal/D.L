@@ -68,12 +68,14 @@ class WatchdogAgent(ABC):
         # Shared-mind bridge — injected by kernel after registration
         self.mind: Optional["SyncBridge"] = None
 
-        self._running:       bool              = False
-        self._task:          Optional[asyncio.Task] = None
-        self._failures:      int               = 0
-        self._last_ok:       float             = time.monotonic()
-        self._check_count:   int               = 0
-        self._started_at:    float             = 0.0
+        self._running:          bool              = False
+        self._task:             Optional[asyncio.Task] = None
+        self._failures:         int               = 0
+        self._last_ok:          float             = time.monotonic()
+        self._check_count:      int               = 0
+        self._started_at:       float             = 0.0
+        self._last_event_type:  Optional[str]     = None
+        self._last_severity:    Optional[str]     = None
 
         self.log = logging.getLogger(f"watchdog.agent.{agent_id}")
 
@@ -137,6 +139,10 @@ class WatchdogAgent(ABC):
                 )
 
             await self.bus.publish(event)
+
+            # Track last event for dashboard manual-heal endpoint
+            self._last_event_type = event.event_type.name
+            self._last_severity   = event.severity.name
 
             # ── Sync to shared mind ───────────────────────────────────────────
             await self._sync_to_mind(event)
@@ -239,6 +245,8 @@ class WatchdogAgent(ABC):
             "last_ok_ago_s":   round(time.monotonic() - self._last_ok, 1),
             "uptime_s":        round(time.monotonic() - self._started_at, 1),
             "mind_connected":  self.mind is not None,
+            "last_event_type": self._last_event_type,
+            "last_severity":   self._last_severity,
         }
         if self.mind:
             snap["shard_state"]  = self.mind.shard.state

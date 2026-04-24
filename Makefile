@@ -1,4 +1,4 @@
-.PHONY: all build cython rust sol clean install test lint server bot
+.PHONY: all build cython rust sol clean install test lint server bot frontend frontend-dev frontend-build
 
 # ── Default ────────────────────────────────────────────────────────────────────
 all: build
@@ -68,3 +68,23 @@ docker-run-api:
 
 docker-run-bot:
 	docker run -d --env-file .env -e TRADE_MODE=paper --name aureon-bot aureon-bot
+
+# ── Frontend ───────────────────────────────────────────────────────────────────
+frontend-install:
+	cd frontend && npm install
+
+frontend-dev:
+	cd frontend && npm run dev
+
+frontend-build:
+	cd frontend && npm run build
+
+frontend: frontend-build
+
+# ── Hot-swap (dev only — start server with file watching) ──────────────────────
+server-hotswap:
+	HOTSWAP=1 uvicorn main:app --host 0.0.0.0 --port 8010 --reload
+
+# ── Full production stack ──────────────────────────────────────────────────────
+prod: frontend build
+	uvicorn main:app --host 0.0.0.0 --port 8010 --workers 4

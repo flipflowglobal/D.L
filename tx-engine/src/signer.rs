@@ -318,4 +318,19 @@ impl TxEngine {
             "configured_cap_gwei":       self.config.max_gas_gwei,
         }))
     }
+
+    // ── Flash loan initiation ─────────────────────────────────────────────────
+
+    /// Broadcast a `NexusFlashReceiver.initiate(...)` transaction.
+    ///
+    /// `calldata` is the fully ABI-encoded selector + arguments produced by
+    /// `flash::encode_initiate_calldata`.  The flash loan itself carries no
+    /// ETH value; gas estimation is performed automatically.
+    pub async fn initiate_flash_loan(
+        &self,
+        contract:  alloy::primitives::Address,
+        calldata:  alloy::primitives::Bytes,
+    ) -> TxResult<crate::signer::TxReceipt> {
+        self.send_eth(contract, alloy::primitives::U256::ZERO, Some(calldata)).await
+    }
 }

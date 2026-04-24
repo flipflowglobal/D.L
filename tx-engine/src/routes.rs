@@ -15,6 +15,7 @@ use alloy::primitives::{Address, U256, Bytes};
 use std::str::FromStr;
 
 use crate::AppState;
+use crate::flash::{FlashInitRequest, encode_initiate_calldata};
 
 // ── POST /tx/send ─────────────────────────────────────────────────────────────
 
@@ -155,4 +156,49 @@ pub async fn get_config(State(s): State<AppState>) -> Json<Value> {
         "wallet_configured":  s.config.private_key.is_some(),
         "profit_wallet":      s.config.profit_wallet,
     }))
+}
+
+// ── POST /flash/initiate ──────────────────────────────────────────────────────
+
+/// Initiate a flash-loan arbitrage via NexusFlashReceiver.initiate().
+///
+/// Request body (structured steps):
+/// ```json
+/// {
+///   "contract":       "0x<NexusFlashReceiver>",
+///   "asset":          "0x<token_to_borrow>",
+///   "amount_wei":     "1000000000000000000",
+///   "min_profit_wei": "1000000",
+///   "steps": [
+///     {
+///       "token_in":       "0xC02...",
+///       "token_out":      "0xA0b...",
+///       "router":         "0xb27...",
+///       "amount_out_min": "2400000000",
+///       "deadline":       1234567890,
+///       "dex":            0
+///     }
+///   ]
+/// }
+/// ```
+///
+/// Alternatively, pass `"steps_hex": "0x..."` with pre-ABI-encoded bytes.
+pub async fn flash_initiate(
+    State(s): State<AppState>,
+    Json(req): Json<FlashInitRequest>,
+) -> (StatusCode, Json<Value>) {
+    // Encode calldata from the request
+    let (contract, calldata) = match encode_initiate_calldata(&req) {
+        Ok(v)  => v,
+        Err(e) => return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": e.to_string()})),
+        ),
+    };
+
+    // Delegate to the signer (handles dry-run, fee estimation, broadcast)
+    match s.engine.initiate_flash_loan(contract, Bytes::from(calldata)).await {
+        Ok(receipt) => (StatusCode::OK, Json(serde_json::to_value(receipt).unwrap())),
+        Err(e)      => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))),
+    }
 }

@@ -137,10 +137,13 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
     // ── State ─────────────────────────────────────────────────────────────────
     address public immutable owner;
     address public immutable aavePool;
+    bool    public paused;
+    uint256 public minDeadlineBuffer = 30; // seconds buffer before step deadline
 
     // ── Events ────────────────────────────────────────────────────────────────
     event FlashExecuted(address indexed asset, uint256 borrowed, uint256 profit, uint256 steps);
     event ProfitWithdrawn(address indexed token, address indexed to, uint256 amount);
+    event EmergencyPause(address indexed by, bool paused);
 
     // ── Modifiers ─────────────────────────────────────────────────────────────
     modifier onlyOwner() {
@@ -153,11 +156,22 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
         _;
     }
 
+    modifier whenNotPaused() {
+        require(!paused, "NFR: paused");
+        _;
+    }
+
     // ── Constructor ───────────────────────────────────────────────────────────
     constructor(address _aavePool) {
         require(_aavePool != address(0), "NFR: zero pool");
         owner    = msg.sender;
         aavePool = _aavePool;
+    }
+
+    /// @notice Toggle emergency pause (circuit breaker). Only owner.
+    function setPaused(bool _paused) external onlyOwner {
+        paused = _paused;
+        emit EmergencyPause(msg.sender, _paused);
     }
 
     // ── SwapStep encoding ─────────────────────────────────────────────────────
@@ -196,7 +210,7 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
         uint256 amount,
         bytes calldata steps,
         uint256 minProfit
-    ) external onlyOwner {
+    ) external onlyOwner whenNotPaused {
         // Pack minProfit into params so executeOperation can access it
         bytes memory params = abi.encode(steps, minProfit);
         IAavePool(aavePool).flashLoanSimple(
@@ -261,6 +275,11 @@ contract NexusFlashReceiver is IFlashLoanSimpleReceiver {
     function _executeStep(SwapStep memory s, uint256 amountIn)
         internal returns (uint256 amountOut)
     {
+        // Enforce minimum deadline buffer to prevent front-running near expiry
+        require(
+            s.deadline == 0 || s.deadline >= block.timestamp + minDeadlineBuffer,
+            "NFR: deadline too close"
+        );
         if (s.dex == DEX_UNI_V3) {
             return _swapUniV3(s, amountIn);
         } else if (s.dex == DEX_SUSHI_V2 || s.dex == DEX_CAMELOT) {

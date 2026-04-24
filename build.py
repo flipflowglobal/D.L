@@ -2,20 +2,21 @@
 """
 build.py — AUREON master build orchestrator (Phase 5).
 
-Compiles all four language pipelines in parallel then validates the result:
+Compiles all five language pipelines in parallel then validates the result:
 
   Pipeline A: Cython  → portfolio.so, risk_manager.so, mean_reversion.so
   Pipeline B: Rust    → dex-oracle (release binary)
   Pipeline C: Rust    → tx-engine  (release binary)
   Pipeline D: Solidity → FlashLoanArbitrage ABI + bytecode (via py-solc-x)
+  Pipeline E: Rust    → hinsdale (EVM decompiler cdylib + CLI)
 
-Pipelines A, B, C, D run concurrently via asyncio.gather().
+Pipelines A, B, C, D, E run concurrently via asyncio.gather().
 Wall-clock time = max(slowest_pipeline) instead of sum of all.
 
 Usage:
   python build.py              # build everything
   python build.py --cython     # Cython only
-  python build.py --rust       # both Rust crates only
+  python build.py --rust       # all Rust crates only
   python build.py --sol        # Solidity only
   python build.py --clean      # remove all build artefacts
 
@@ -54,9 +55,10 @@ CYTHON_D = BUILD / "cython"
 RUST_D   = BUILD / "rust"
 SOL_D    = BUILD / "solidity"
 
-DEX_CRATE = ROOT / "dex-oracle"
-TX_CRATE  = ROOT / "tx-engine"
-SOL_FILE  = ROOT / "contracts" / "FlashLoanArbitrage.sol"
+DEX_CRATE     = ROOT / "dex-oracle"
+TX_CRATE      = ROOT / "tx-engine"
+HINSDALE_CRATE = ROOT / "hinsdale"
+SOL_FILE      = ROOT / "contracts" / "FlashLoanArbitrage.sol"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -112,6 +114,72 @@ async def build_rust_dex() -> dict:
 
 async def build_rust_tx() -> dict:
     return await _build_rust_crate("tx-engine", TX_CRATE)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pipeline E — Rust hinsdale (EVM decompiler)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def build_rust_hinsdale() -> dict:
+    t0 = time.monotonic()
+    log.info("[RUST/hinsdale] Starting release build …")
+
+    if not (HINSDALE_CRATE / "Cargo.toml").exists():
+        return _fail("rust/hinsdale", f"{HINSDALE_CRATE}/Cargo.toml not found", t0)
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "cargo", "build", "--release",
+            cwd=str(HINSDALE_CRATE),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+    except FileNotFoundError:
+        return _fail("rust/hinsdale", "cargo not found — install Rust", t0)
+    except Exception as exc:
+        return _fail("rust/hinsdale", str(exc), t0)
+
+    if proc.returncode != 0:
+        err = stderr.decode(errors="replace")[-800:]
+        return _fail("rust/hinsdale", f"exit {proc.returncode}\n{err}", t0)
+
+    # Windows produces hinsdale-cli.exe; Linux/macOS produces hinsdale-cli
+    cli_binary = HINSDALE_CRATE / "target" / "release" / "hinsdale-cli.exe"
+    if not cli_binary.exists():
+        cli_binary = HINSDALE_CRATE / "target" / "release" / "hinsdale-cli"
+    if not cli_binary.exists():
+        return _fail("rust/hinsdale", "hinsdale-cli binary not found after build", t0)
+
+    size_mb = cli_binary.stat().st_size / 1_048_576
+    RUST_D.mkdir(parents=True, exist_ok=True)
+    dest = RUST_D / cli_binary.name  # preserves .exe on Windows
+    shutil.copy2(cli_binary, dest)
+    if not dest.suffix == ".exe":
+        dest.chmod(0o755)
+
+    # Also collect the cdylib if present (for Python FFI via ctypes/Cython).
+    # On Linux/macOS the output is libhinsdale.so/.dylib; on Windows Rust cdylib
+    # drops the "lib" prefix and produces hinsdale.dll (no lib prefix).
+    cdylib_extras = {}
+    release_dir = HINSDALE_CRATE / "target" / "release"
+    for candidate in [
+        release_dir / "libhinsdale.so",
+        release_dir / "libhinsdale.dylib",
+        release_dir / "hinsdale.dll",      # Windows (no lib prefix)
+        release_dir / "libhinsdale.dll",   # fallback
+    ]:
+        if candidate.exists():
+            shutil.copy2(candidate, RUST_D / candidate.name)
+            cdylib_extras["cdylib"] = str(RUST_D / candidate.name)
+            break
+
+    elapsed = time.monotonic() - t0
+    log.info("[RUST/hinsdale] Done in %.1fs — CLI: %.1f MB", elapsed, size_mb)
+    extra = {"binary": str(dest), "size_mb": round(size_mb, 2)}
+    if cdylib_extras:
+        extra.update(cdylib_extras)
+    return _ok("rust/hinsdale", elapsed, extra)
 
 
 async def _build_rust_crate(name: str, crate_dir: Path) -> dict:
@@ -248,7 +316,7 @@ def _fail(name: str, reason: str, t0: float) -> dict:
 def _clean():
     """Remove all build artefacts."""
     removed = 0
-    for pat in ["build/", "dex-oracle/target/", "tx-engine/target/"]:
+    for pat in ["build/", "dex-oracle/target/", "tx-engine/target/", "hinsdale/target/"]:
         d = ROOT / pat
         if d.exists():
             shutil.rmtree(d)
@@ -281,9 +349,10 @@ async def main(args: argparse.Namespace) -> int:
     if args.cython or args.all:
         pipelines.append(build_cython())
     if args.rust or args.all:
-        # Run both Rust crates concurrently
+        # Run all Rust crates concurrently
         pipelines.append(build_rust_dex())
         pipelines.append(build_rust_tx())
+        pipelines.append(build_rust_hinsdale())
     if args.sol or args.all:
         pipelines.append(build_solidity())
 
