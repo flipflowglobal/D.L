@@ -122,3 +122,25 @@ class RiskManager:
             "max_position_usd": self.max_position_usd,
             "reset_day":        self._reset_day,
         }
+
+    def kelly_position_size(
+        self,
+        kelly_fraction: float,
+        capital_usd: float,
+        max_fraction: float = 0.25,
+    ) -> float:
+        """
+        Compute Kelly-sized position from a pre-computed Kelly fraction.
+
+        kelly_fraction: f* from BellmanFord MC (0–1), already quarter-Kelly
+        capital_usd:    available capital in USD
+        max_fraction:   hard cap as fraction of capital (default 25 %)
+        Returns:        position size in USD, capped at max_position_usd
+        """
+        f   = float(max(min(kelly_fraction, max_fraction), 0.0))
+        pos = f * float(capital_usd)
+        capped = min(pos, float(self.max_position_usd))
+        logger.debug(
+            "Kelly position: f=%.4f raw=%.2f capped=%.2f", f, pos, capped
+        )
+        return capped

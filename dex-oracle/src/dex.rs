@@ -1,13 +1,14 @@
 //! dex.rs — On-chain DEX price queries via alloy-rs.
 //!
-//! Queries Uniswap V3 (3 fee tiers) and SushiSwap V2 concurrently
+//! Queries all five DEXes supported by NexusFlashReceiver concurrently
 //! using tokio::join!.  All calls are eth_call (read-only, no gas).
 //!
-//! Mainnet contract addresses:
-//!   Uniswap V3 Quoter V1 : 0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6
-//!   SushiSwap Router V2  : 0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F
-//!   WETH                 : 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
-//!   USDC                 : 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+//! DEX sources (in priority order for arbitrage evaluation):
+//!   Uniswap V3 Quoter V1  : 0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6 (mainnet)
+//!   SushiSwap Router V2   : 0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F (mainnet)
+//!   Curve TriCrypto2      : 0xD51a44d3FaE010294C616388b506AcdA1bfAAE46 (mainnet)
+//!   Balancer V2 Vault     : 0xBA12222222228d8Ba445958a75a0704d566BF2C8 (mainnet)
+//!   Camelot V2 Router     : configurable via CAMELOT_ROUTER_ADDR (Arbitrum)
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,7 +16,7 @@ use std::time::Duration;
 
 use alloy::network::Ethereum;
 use alloy::primitives::aliases::U24;
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{Address, FixedBytes, U256};
 use alloy::providers::{Provider, RootProvider};
 use alloy::sol;
 use tracing::{debug, warn};
@@ -40,13 +41,34 @@ sol! {
 }
 
 sol! {
-    /// SushiSwap V2 Router — getAmountsOut
+    /// SushiSwap V2 Router — getAmountsOut (also used for Camelot V2)
     #[sol(rpc)]
     interface ISushiRouter {
         function getAmountsOut(
             uint256          amountIn,
             address[] memory path
         ) external view returns (uint256[] memory amounts);
+    }
+}
+
+sol! {
+    /// Curve TriCrypto / crypto-swap pools — get_dy (view price, no execution)
+    /// Coin indices for TriCrypto2 (mainnet): 0=USDT, 1=WBTC, 2=WETH
+    #[sol(rpc)]
+    interface ICurveTricrypto {
+        function get_dy(uint256 i, uint256 j, uint256 dx) external view returns (uint256 dy);
+    }
+}
+
+sol! {
+    /// Balancer V2 Vault — getPoolTokens (returns token balances for spot price)
+    #[sol(rpc)]
+    interface IBalancerVaultQuery {
+        function getPoolTokens(bytes32 poolId) external view returns (
+            address[] memory tokens,
+            uint256[] memory balances,
+            uint256 lastChangeBlock
+        );
     }
 }
 
@@ -57,6 +79,18 @@ const SUSHI_ROUTER:   &str = "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F";
 const WETH:           &str = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
 const USDC:           &str = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 
+// Curve TriCrypto2 on mainnet: coins = [USDT(0), WBTC(1), WETH(2)]
+// get_dy(i=2, j=0, dx=1e18) → USDT per 1 WETH  (USDT ≈ USDC, both 6 dec)
+const CURVE_TRICRYPTO2:    &str = "0xD51a44d3FaE010294C616388b506AcdA1bfAAE46";
+const CURVE_WETH_IDX:      u64  = 2;
+const CURVE_STABLEOUT_IDX: u64  = 0;
+
+// Balancer V2 Vault (immutable across mainnet)
+const BALANCER_VAULT: &str = "0xBA12222222228d8Ba445958a75a0704d566BF2C8";
+// WETH/USDC 50/50 weighted pool on mainnet
+const BALANCER_WETH_USDC_POOL_ID: &str =
+    "0x96646936b91d6b9d7d0c47c496afbf3d6ec7b6f5000200000000000000000019";
+
 // Uniswap V3 fee tiers (raw u32 → converted to U24 at call site)
 const FEE_LOW:    u32 = 500;    // 0.05 %
 const FEE_MEDIUM: u32 = 3000;  // 0.30 %
@@ -64,22 +98,28 @@ const FEE_HIGH:   u32 = 10000; // 1.00 %
 
 // 1 WETH = 1e18 wei
 const ONE_ETH_WEI: u128 = 1_000_000_000_000_000_000;
-// USDC decimals
-const USDC_DECIMALS: f64 = 1_000_000.0;
+// USDC / USDT decimals (both 6)
+const STABLE_DECIMALS: f64 = 1_000_000.0;
 
 /// Concrete provider type.
-/// In alloy 1.x, RootProvider<N> erases the transport; N is the Network.
 pub type HttpProvider = RootProvider<Ethereum>;
 
 // ── DexOracle ─────────────────────────────────────────────────────────────────
 
 pub struct DexOracle {
-    provider:        Option<Arc<HttpProvider>>,
-    uni_quoter_addr: Address,
-    sushi_addr:      Address,
-    weth_addr:       Address,
-    usdc_addr:       Address,
-    config:          Arc<OracleConfig>,
+    provider:            Option<Arc<HttpProvider>>,
+    uni_quoter_addr:     Address,
+    sushi_addr:          Address,
+    weth_addr:           Address,
+    usdc_addr:           Address,
+    // ── Extended DEX support ─────────────────────────────────────────────────
+    curve_pool_addr:     Option<Address>,
+    balancer_vault_addr: Address,
+    balancer_pool_id:    FixedBytes<32>,
+    camelot_addr:        Option<Address>,
+    camelot_weth:        Option<Address>,
+    camelot_usdc:        Option<Address>,
+    config:              Arc<OracleConfig>,
 }
 
 impl DexOracle {
@@ -89,9 +129,7 @@ impl DexOracle {
         let provider: Option<Arc<HttpProvider>> = if let Some(rpc_url) = &config.rpc_url {
             match rpc_url.parse::<url::Url>() {
                 Ok(url) => {
-                    // RootProvider::new_http — zero-cost, synchronous, no filler overhead
                     let p = HttpProvider::new_http(url);
-                    // Test connectivity with timeout
                     match tokio::time::timeout(
                         Duration::from_millis(config.rpc_timeout_ms),
                         p.get_block_number(),
@@ -119,12 +157,75 @@ impl DexOracle {
             None
         };
 
+        // ── Parse optional extended DEX addresses ─────────────────────────────
+
+        // Curve pool — default to mainnet TriCrypto2, disable if set to empty
+        let curve_pool_addr: Option<Address> = config
+            .curve_pool_addr
+            .as_deref()
+            .unwrap_or(CURVE_TRICRYPTO2)
+            .parse()
+            .map_err(|e| {
+                warn!("Invalid CURVE_POOL_ADDR: {} — Curve disabled", e);
+            })
+            .ok();
+
+        // Balancer Vault
+        let balancer_vault_addr: Address = config
+            .balancer_vault_addr
+            .as_deref()
+            .unwrap_or(BALANCER_VAULT)
+            .parse()
+            .unwrap_or_else(|_| {
+                warn!("Invalid BALANCER_VAULT_ADDR — using default");
+                BALANCER_VAULT.parse().expect("hard-coded balancer vault addr valid")
+            });
+
+        // Balancer pool ID
+        let balancer_pool_id: FixedBytes<32> = config
+            .balancer_pool_id
+            .as_deref()
+            .unwrap_or(BALANCER_WETH_USDC_POOL_ID)
+            .parse()
+            .unwrap_or_else(|_| {
+                warn!("Invalid BALANCER_POOL_ID — using default");
+                BALANCER_WETH_USDC_POOL_ID
+                    .parse()
+                    .expect("hard-coded balancer pool id valid")
+            });
+
+        // Camelot router (optional — only active if env var is set)
+        let camelot_addr: Option<Address> = config
+            .camelot_router_addr
+            .as_deref()
+            .and_then(|s| s.parse().ok());
+
+        let camelot_weth: Option<Address> = config
+            .camelot_weth_addr
+            .as_deref()
+            .and_then(|s| s.parse().ok());
+
+        let camelot_usdc: Option<Address> = config
+            .camelot_usdc_addr
+            .as_deref()
+            .and_then(|s| s.parse().ok());
+
+        if camelot_addr.is_some() {
+            tracing::info!("Camelot V2 pricing enabled");
+        }
+
         Self {
             provider,
             uni_quoter_addr: UNISWAP_QUOTER.parse().expect("bad quoter addr"),
             sushi_addr:      SUSHI_ROUTER.parse().expect("bad sushi addr"),
             weth_addr:       WETH.parse().expect("bad weth addr"),
             usdc_addr:       USDC.parse().expect("bad usdc addr"),
+            curve_pool_addr,
+            balancer_vault_addr,
+            balancer_pool_id,
+            camelot_addr,
+            camelot_weth,
+            camelot_usdc,
             config,
         }
     }
@@ -141,7 +242,6 @@ impl DexOracle {
 
         let quoter = IUniswapV3Quoter::new(self.uni_quoter_addr, provider.as_ref());
 
-        // fee: u32 → U24 (uint24); all tier values (500/3000/10000) fit in 24 bits
         let fee_u24 = U24::try_from(fee)
             .map_err(|_| OracleError::Rpc(format!("fee {} overflows uint24", fee)))?;
 
@@ -153,7 +253,6 @@ impl DexOracle {
             U256::ZERO,
         );
 
-        // alloy 1.x: single-return sol! functions return the value directly
         let amount_out: U256 = tokio::time::timeout(
             Duration::from_millis(self.config.rpc_timeout_ms),
             call.call(),
@@ -162,9 +261,8 @@ impl DexOracle {
         .map_err(|_| OracleError::Rpc(format!("Timeout on fee={}", fee)))?
         .map_err(|e| OracleError::Rpc(e.to_string()))?;
 
-        // Convert from U256 to f64; USDC has 6 decimals
         let price = u128::try_from(amount_out)
-            .map(|v| v as f64 / USDC_DECIMALS)
+            .map(|v| v as f64 / STABLE_DECIMALS)
             .map_err(|_| OracleError::Decode("U256 overflow on amountOut".into()))?;
 
         debug!("Uniswap fee={} price=${:.2}", fee, price);
@@ -172,9 +270,6 @@ impl DexOracle {
     }
 
     /// Fetch the best Uniswap V3 ETH price across ALL fee tiers concurrently.
-    ///
-    /// All 3 fee-tier calls are launched simultaneously via tokio::join!.
-    /// Wall-clock latency = max(single_call_latency) instead of 3×.
     pub async fn best_uniswap_price(&self) -> OracleResult<f64> {
         let (r_low, r_med, r_high) = tokio::join!(
             self.uni_quote_fee(FEE_LOW),
@@ -194,7 +289,7 @@ impl DexOracle {
             .ok_or(OracleError::NoPriceData)
     }
 
-    /// Return all three fee-tier prices (for diagnostics / the /prices/uniswap endpoint).
+    /// Return all three fee-tier prices (for /prices/uniswap endpoint).
     pub async fn all_uniswap_prices(&self) -> HashMap<String, f64> {
         let (r_low, r_med, r_high) = tokio::join!(
             self.uni_quote_fee(FEE_LOW),
@@ -213,32 +308,155 @@ impl DexOracle {
 
     /// Fetch ETH/USDC price from SushiSwap V2 via getAmountsOut.
     pub async fn sushiswap_price(&self) -> OracleResult<f64> {
+        self.amm_v2_price(self.sushi_addr, self.weth_addr, self.usdc_addr, "SushiSwap").await
+    }
+
+    // ── Curve TriCrypto ───────────────────────────────────────────────────────
+
+    /// Fetch ETH/USD price from Curve TriCrypto via get_dy (view, no execution).
+    ///
+    /// Uses the TriCrypto2 pool (USDT/WBTC/WETH) on mainnet by default.
+    /// get_dy(i=2, j=0, dx=1e18) → USDT per 1 WETH (USDT ≈ USDC, 6 decimals).
+    /// Returns None (NoPriceData) if Curve is disabled (CURVE_POOL_ADDR not set
+    /// to a valid address).
+    pub async fn curve_price(&self) -> OracleResult<f64> {
+        let pool_addr = self.curve_pool_addr.ok_or(OracleError::NoPriceData)?;
+        let provider  = self.provider.as_ref().ok_or(OracleError::NoPriceData)?;
+
+        let pool = ICurveTricrypto::new(pool_addr, provider.as_ref());
+
+        let dy: U256 = tokio::time::timeout(
+            Duration::from_millis(self.config.rpc_timeout_ms),
+            pool.get_dy(
+                U256::from(CURVE_WETH_IDX),
+                U256::from(CURVE_STABLEOUT_IDX),
+                U256::from(ONE_ETH_WEI),
+            ).call(),
+        )
+        .await
+        .map_err(|_| OracleError::Rpc("Curve get_dy timeout".into()))?
+        .map_err(|e| OracleError::Rpc(e.to_string()))?;
+
+        let price = u128::try_from(dy)
+            .map(|v| v as f64 / STABLE_DECIMALS)
+            .map_err(|_| OracleError::Decode("Curve dy U256 overflow".into()))?;
+
+        if price <= 0.0 {
+            return Err(OracleError::NoPriceData);
+        }
+
+        debug!("Curve TriCrypto price=${:.2}", price);
+        Ok(price)
+    }
+
+    // ── Balancer V2 ───────────────────────────────────────────────────────────
+
+    /// Fetch WETH/USDC spot price from Balancer V2 via getPoolTokens.
+    ///
+    /// Calls `getPoolTokens(poolId)` on the Balancer Vault to read token
+    /// balances, then computes spot price for a 50/50 weighted pool:
+    ///   spot = (usdc_balance / 1e6) / (weth_balance / 1e18)
+    ///
+    /// This is a read-only eth_call — no swap is executed.
+    pub async fn balancer_price(&self) -> OracleResult<f64> {
         let provider = self.provider.as_ref().ok_or(OracleError::NoPriceData)?;
 
-        let router = ISushiRouter::new(self.sushi_addr, provider.as_ref());
+        let vault = IBalancerVaultQuery::new(self.balancer_vault_addr, provider.as_ref());
 
-        let path: Vec<Address> = vec![self.weth_addr, self.usdc_addr];
+        let ret = tokio::time::timeout(
+            Duration::from_millis(self.config.rpc_timeout_ms),
+            vault.getPoolTokens(self.balancer_pool_id).call(),
+        )
+        .await
+        .map_err(|_| OracleError::Rpc("Balancer getPoolTokens timeout".into()))?
+        .map_err(|e| OracleError::Rpc(e.to_string()))?;
 
+        let tokens   = ret.tokens;
+        let balances = ret.balances;
+
+        if tokens.len() != balances.len() || tokens.is_empty() {
+            return Err(OracleError::Decode("Balancer: tokens/balances length mismatch".into()));
+        }
+
+        // Locate WETH and USDC in the token list
+        let weth_pos = tokens.iter().position(|t| *t == self.weth_addr)
+            .ok_or_else(|| OracleError::Decode("WETH not found in Balancer pool".into()))?;
+        let usdc_pos = tokens.iter().position(|t| *t == self.usdc_addr)
+            .ok_or_else(|| OracleError::Decode("USDC not found in Balancer pool".into()))?;
+
+        let weth_balance = u128::try_from(balances[weth_pos])
+            .map_err(|_| OracleError::Decode("WETH balance U256 overflow".into()))? as f64;
+        let usdc_balance = u128::try_from(balances[usdc_pos])
+            .map_err(|_| OracleError::Decode("USDC balance U256 overflow".into()))? as f64;
+
+        if weth_balance == 0.0 {
+            return Err(OracleError::NoPriceData);
+        }
+
+        // Spot price for 50/50 pool:
+        //   price_usdc = (usdc_balance / 1e6) / (weth_balance / 1e18)
+        //              = usdc_balance * 1e12 / weth_balance
+        let price = (usdc_balance * 1e12) / weth_balance;
+
+        if price <= 0.0 {
+            return Err(OracleError::NoPriceData);
+        }
+
+        debug!("Balancer WETH/USDC spot price=${:.2}", price);
+        Ok(price)
+    }
+
+    // ── Camelot V2 ───────────────────────────────────────────────────────────
+
+    /// Fetch ETH/USDC price from Camelot V2 (Arbitrum AMM fork).
+    ///
+    /// Camelot uses the same AMM V2 interface as SushiSwap V2.
+    /// Only active if CAMELOT_ROUTER_ADDR is configured.
+    /// Returns NoPriceData if Camelot is not configured (mainnet default).
+    pub async fn camelot_price(&self) -> OracleResult<f64> {
+        let router_addr = self.camelot_addr.ok_or(OracleError::NoPriceData)?;
+        // Use chain-specific WETH/USDC or fall back to mainnet addresses
+        let weth = self.camelot_weth.unwrap_or(self.weth_addr);
+        let usdc = self.camelot_usdc.unwrap_or(self.usdc_addr);
+        self.amm_v2_price(router_addr, weth, usdc, "Camelot").await
+    }
+
+    // ── AMM V2 generic helper ─────────────────────────────────────────────────
+
+    /// Internal: fetch ETH/USDC price from any AMM V2-compatible router.
+    async fn amm_v2_price(
+        &self,
+        router_addr: Address,
+        weth:        Address,
+        usdc:        Address,
+        label:       &str,
+    ) -> OracleResult<f64> {
+        let provider = self.provider.as_ref().ok_or(OracleError::NoPriceData)?;
+
+        let router = ISushiRouter::new(router_addr, provider.as_ref());
+        let path: Vec<Address> = vec![weth, usdc];
         let call = router.getAmountsOut(U256::from(ONE_ETH_WEI), path);
 
-        // alloy 1.x: multi-element array return → Vec<U256> directly
         let amounts: Vec<U256> = tokio::time::timeout(
             Duration::from_millis(self.config.rpc_timeout_ms),
             call.call(),
         )
         .await
-        .map_err(|_| OracleError::Rpc("SushiSwap timeout".into()))?
+        .map_err(|_| OracleError::Rpc(format!("{} getAmountsOut timeout", label)))?
         .map_err(|e| OracleError::Rpc(e.to_string()))?;
 
         if amounts.len() < 2 {
-            return Err(OracleError::Decode("getAmountsOut returned < 2 values".into()));
+            return Err(OracleError::Decode(format!(
+                "{} getAmountsOut returned < 2 values",
+                label
+            )));
         }
 
         let price = u128::try_from(amounts[1])
-            .map(|v| v as f64 / USDC_DECIMALS)
-            .map_err(|_| OracleError::Decode("U256 overflow on amounts[1]".into()))?;
+            .map(|v| v as f64 / STABLE_DECIMALS)
+            .map_err(|_| OracleError::Decode(format!("{} amounts[1] U256 overflow", label)))?;
 
-        debug!("SushiSwap price=${:.2}", price);
+        debug!("{} price=${:.2}", label, price);
         Ok(price)
     }
 
@@ -266,38 +484,52 @@ impl DexOracle {
             .ok_or(OracleError::Decode("CoinGecko response missing price".into()))
     }
 
-    // ── Combined fetch (Uniswap + SushiSwap in parallel) ─────────────────────
+    // ── Combined fetch (all 5 DEX sources in parallel) ────────────────────────
 
-    /// Fetch ALL prices concurrently:
-    ///   - Uniswap V3 (3 fee tiers simultaneously)
+    /// Fetch ALL prices concurrently across all configured DEX sources:
+    ///   - Uniswap V3 (3 fee tiers internally parallel)
     ///   - SushiSwap V2
+    ///   - Curve TriCrypto (if CURVE_POOL_ADDR configured or mainnet default)
+    ///   - Balancer V2 (mainnet default pool, configurable)
+    ///   - Camelot V2 (only if CAMELOT_ROUTER_ADDR is set)
     ///
-    /// Total concurrent RPC calls: 4 (all running via tokio::join!).
+    /// Total concurrent RPC calls: up to 7 (all via tokio::join!).
     /// Wall-clock latency = max(slowest_single_call).
     pub async fn fetch_all_prices(&self) -> OracleResult<HashMap<String, f64>> {
         if !self.is_connected() {
             return Ok(self.simulated_prices().await);
         }
 
-        let (uni_result, sushi_result) = tokio::join!(
-            self.best_uniswap_price(),
-            self.sushiswap_price(),
-        );
+        let (uni_result, sushi_result, curve_result, balancer_result, camelot_result) =
+            tokio::join!(
+                self.best_uniswap_price(),
+                self.sushiswap_price(),
+                self.curve_price(),
+                self.balancer_price(),
+                self.camelot_price(),
+            );
 
         let mut prices = HashMap::new();
 
-        match uni_result {
-            Ok(p)  => { prices.insert("uniswap_v3".to_string(), p); }
-            Err(e) => { warn!("Uniswap price failed: {}", e); }
-        }
-        match sushi_result {
-            Ok(p)  => { prices.insert("sushiswap".to_string(), p); }
-            Err(e) => { warn!("SushiSwap price failed: {}", e); }
+        macro_rules! insert_price {
+            ($result:expr, $key:expr) => {
+                match $result {
+                    Ok(p)  => { prices.insert($key.to_string(), p); }
+                    Err(OracleError::NoPriceData) => {} // silently skip disabled sources
+                    Err(e) => { warn!("{} price failed: {}", $key, e); }
+                }
+            };
         }
 
-        // If both on-chain sources failed, fall back to CoinGecko
+        insert_price!(uni_result,     "uniswap_v3");
+        insert_price!(sushi_result,   "sushiswap");
+        insert_price!(curve_result,   "curve");
+        insert_price!(balancer_result,"balancer");
+        insert_price!(camelot_result, "camelot");
+
+        // If ALL on-chain sources failed, fall back to CoinGecko
         if prices.is_empty() {
-            warn!("Both DEX sources failed — falling back to CoinGecko");
+            warn!("All DEX sources failed — falling back to CoinGecko");
             match self.coingecko_price().await {
                 Ok(p)  => { prices.insert("coingecko".to_string(), p); }
                 Err(e) => {
@@ -321,12 +553,17 @@ impl DexOracle {
             .unwrap_or_default()
             .subsec_nanos() as f64;
 
-        let noise_a = ((nanos % 1000.0) / 1000.0 - 0.5) * 0.02;  // ±1 %
-        let noise_b = ((nanos % 997.0)  / 997.0  - 0.5) * 0.02;  // ±1 %
+        let noise = |salt: f64| ((nanos % salt) / salt - 0.5) * 0.02;
 
         let mut m = HashMap::new();
-        m.insert("uniswap_v3".into(), base * (1.0 + noise_a));
-        m.insert("sushiswap".into(),  base * (1.0 + noise_b));
+        m.insert("uniswap_v3".into(), base * (1.0 + noise(1000.0)));
+        m.insert("sushiswap".into(),  base * (1.0 + noise(997.0)));
+        m.insert("curve".into(),      base * (1.0 + noise(991.0)));
+        m.insert("balancer".into(),   base * (1.0 + noise(983.0)));
+        // Camelot only simulated if configured
+        if self.camelot_addr.is_some() {
+            m.insert("camelot".into(), base * (1.0 + noise(977.0)));
+        }
         m
     }
 
@@ -361,3 +598,4 @@ impl DexOracle {
         }
     }
 }
+

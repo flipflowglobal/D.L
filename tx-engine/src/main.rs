@@ -13,6 +13,7 @@
 
 mod config;
 mod error;
+mod flash;
 mod routes;
 mod signer;
 
@@ -88,11 +89,12 @@ async fn main() -> anyhow::Result<()> {
 
     // Router
     let app = Router::new()
-        .route("/tx/send",     post(routes::send_eth))
-        .route("/tx/contract", post(routes::contract_call))
-        .route("/gas",         get(routes::gas_price))
-        .route("/health",      get(routes::health))
-        .route("/config",      get(routes::get_config))
+        .route("/tx/send",         post(routes::send_eth))
+        .route("/tx/contract",     post(routes::contract_call))
+        .route("/flash/initiate",  post(routes::flash_initiate))
+        .route("/gas",             get(routes::gas_price))
+        .route("/health",          get(routes::health))
+        .route("/config",          get(routes::get_config))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state);

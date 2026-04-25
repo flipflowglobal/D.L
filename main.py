@@ -24,6 +24,7 @@ except (ImportError, AttributeError):
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from intelligence.memory import memory
@@ -35,6 +36,15 @@ from intelligence.trading_agent import (
     Token,
     registry,
 )
+
+# ── Hot-swap controller ───────────────────────────────────────────────────────
+try:
+    from hotswap import HotSwapController
+    _hotswap_ctl = HotSwapController(poll_interval_s=2.0)
+    _HOTSWAP_AVAILABLE = True
+except Exception:
+    _hotswap_ctl = None  # type: ignore[assignment]
+    _HOTSWAP_AVAILABLE = False
 
 # ── Watchdog legion ───────────────────────────────────────────────────────────
 try:
@@ -110,6 +120,14 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Watchdog unavailable — system running without self-healing")
 
+    # ── Hot-swap watcher ─────────────────────────────────────────────────────
+    if _HOTSWAP_AVAILABLE and _hotswap_ctl:
+        try:
+            _hotswap_ctl.start()
+            logger.info("Hot-swap controller online (%d targets)", len(_hotswap_ctl._targets))
+        except Exception as exc:
+            logger.warning("Hot-swap watcher failed to start (non-fatal): %s", exc)
+
     logger.info("Cognitive system online — multi-agent registry ready")
     yield
 
@@ -120,6 +138,9 @@ async def lifespan(app: FastAPI):
             logger.info("Watchdog legion shut down")
         except Exception as exc:
             logger.warning("Watchdog shutdown error (non-fatal): %s", exc)
+
+    if _HOTSWAP_AVAILABLE and _hotswap_ctl:
+        _hotswap_ctl.stop()
 
     loop.running = False
     await memory.close()
@@ -142,6 +163,13 @@ app = FastAPI(
 if _WATCHDOG_AVAILABLE and _watchdog_router is not None:
     app.include_router(_watchdog_router)
     logger.info("Watchdog dashboard mounted at /watchdog")
+
+# ── Serve compiled React frontend ─────────────────────────────────────────────
+import os as _os
+_FRONTEND_DIST = _os.path.join(_os.path.dirname(__file__), "frontend", "dist")
+if _os.path.isdir(_FRONTEND_DIST):
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="frontend")
+    logger.info("Frontend SPA mounted from %s", _FRONTEND_DIST)
 
 
 # ── Watchdog helpers ──────────────────────────────────────────────────────────

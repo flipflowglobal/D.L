@@ -234,3 +234,23 @@ class ArbitrageScanner:
             }]
 
         return None
+
+    async def scan_bellman(self, w3=None) -> list:
+        """
+        Run the SPFA Bellman-Ford scanner with CLMM slippage + Monte Carlo.
+
+        Delegates to nexus_arb.bellman_ford.BellmanFordScanner.
+        Returns a list of ArbRoute objects sorted by net_profit_usd desc.
+        Falls back to empty list if nexus_arb is unavailable.
+        """
+        try:
+            from nexus_arb.bellman_ford import BellmanFordScanner
+            scanner = BellmanFordScanner(w3=w3)
+            routes  = await scanner.scan()
+            logger.info(
+                "BellmanFord scan: %d profitable route(s) found", len(routes)
+            )
+            return routes
+        except Exception as exc:
+            logger.debug("scan_bellman failed: %s", exc)
+            return []

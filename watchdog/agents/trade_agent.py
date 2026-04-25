@@ -54,8 +54,36 @@ class TradeLoopAgent(WatchdogAgent):
         self._expected_running: bool = False    # tracks intended state
         self._last_cycle: Optional[int]  = None
         self._last_cycle_time: float     = time.monotonic()
+        self._ts_sampler  = None
+        self._recommended_dex: str = "uniswap_v3"
 
     # ── Lazy resolution of live objects ──────────────────────────────────────
+
+    def _get_ts_sampler(self):
+        """Lazy-init Thompson Sampler for DEX arm selection (soft-fail)."""
+        if self._ts_sampler is None:
+            try:
+                from nexus_arb.thompson_sampling import HierarchicalThompsonSampler
+                self._ts_sampler = HierarchicalThompsonSampler()
+            except Exception:
+                pass
+        return self._ts_sampler
+
+    def recommend_dex(self, reward: float = 0.0, arm: str = "") -> str:
+        """
+        Update Thompson Sampler and recommend the next DEX arm.
+
+        reward: normalised [0,1] profit score for the last arm executed
+        arm:    arm name that was just executed (blank = skip update)
+        Returns: recommended DEX arm name
+        """
+        sampler = self._get_ts_sampler()
+        if sampler is None:
+            return self._recommended_dex
+        if arm:
+            sampler.update(arm, float(reward))
+        self._recommended_dex = sampler.select()
+        return self._recommended_dex
 
     def _resolve(self) -> bool:
         """Import loop/memory singletons. Returns True if available."""
@@ -135,7 +163,11 @@ class TradeLoopAgent(WatchdogAgent):
             EventType.TRADE_LOOP_OK,
             EventSeverity.INFO,
             f"Loop {state} (cycle #{cycle_count})",
-            details={"running": is_running, "cycle_count": cycle_count},
+            details={
+                "running": is_running,
+                "cycle_count": cycle_count,
+                "recommended_dex": self._recommended_dex,
+            },
         )
 
     # ── Heal ──────────────────────────────────────────────────────────────────

@@ -54,8 +54,34 @@ class AgentLoop:
         self.cycle_count = 0
         self._supervisor  = None
         self._price_engine = None
+        self._kalman      = None
+        self._filtered_price: float = 0.0
 
     # ── engine init ───────────────────────────────────────────────────────────
+
+    def _init_kalman(self) -> None:
+        """Lazy-initialise the IMM Kalman filter (soft-fail)."""
+        try:
+            from nexus_arb.kalman_filter import KalmanFilter
+            self._kalman = KalmanFilter()
+        except Exception:
+            self._kalman = None
+
+    async def _kalman_smooth(self, price: float) -> float:
+        """Run one IMM-UKF update and return the smoothed price estimate."""
+        if self._kalman is None:
+            return price
+        try:
+            state = await self._kalman.update(float(price))
+            self._filtered_price = state.price_est
+            return state.price_est
+        except Exception:
+            return price
+
+    @property
+    def filtered_price(self) -> float:
+        """Last Kalman-filtered price (0.0 before first update)."""
+        return self._filtered_price
 
     def _build_engine(self) -> dict:
         """Build engine modules (called once; synchronous import is OK at startup)."""
@@ -68,6 +94,7 @@ class AgentLoop:
         from engine.execution.executor           import Executor
 
         rpc = os.getenv("RPC_URL") or os.getenv("ETH_RPC")
+        self._init_kalman()
         return {
             "market":    MarketData(),
             "portfolio": Portfolio(initial_usd=float(os.getenv("INITIAL_USD", "10000"))),

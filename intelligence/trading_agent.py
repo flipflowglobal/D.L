@@ -40,7 +40,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-import numpy as np
+try:
+    import numpy as np
+    _HAS_NUMPY = True
+except ImportError:
+    np = None  # type: ignore[assignment]
+    _HAS_NUMPY = False
 
 logger = logging.getLogger("aureon.trading_agent")
 
@@ -196,6 +201,8 @@ class TradingAgent:
 
         # ── Algorithm ─────────────────────────────────────────────────────────
         self._algorithm = self._build_algorithm()
+        self._shapley   = self._build_advanced_scorer()
+        self._regime: str = "unknown"
 
         # ── Portfolio state ────────────────────────────────────────────────────
         self._capital      = config.initial_capital
@@ -214,6 +221,19 @@ class TradingAgent:
         self._task: Optional[asyncio.Task] = None
 
     # ── Algorithm factory ─────────────────────────────────────────────────────
+
+    def _build_advanced_scorer(self):
+        """Instantiate ShapleyScorer for multi-agent attribution (soft fail)."""
+        try:
+            from nexus_arb.shapley_scorer import ShapleyScorer
+            return ShapleyScorer(n_players=5, n_samples=128)
+        except Exception:
+            return None
+
+    @property
+    def regime(self) -> str:
+        """Current market regime classification."""
+        return self._regime
 
     def _build_algorithm(self) -> Any:
         """Instantiate the algorithm appropriate for this agent's strategy."""
@@ -310,6 +330,7 @@ class TradingAgent:
             "total_pnl":      self.total_pnl,
             "errors":         self.errors,
             "status":         self.status.value,
+            "regime":         self._regime,
         }
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -374,9 +395,15 @@ class TradingAgent:
         arb = self._algorithm
         arb.clear()
         # Synthetic spread: ±0.3 % noise per DEX
-        rng = np.random.default_rng(int(price * 1000) % (2**31))
+        seed = int(price * 1000) % (2**31)
+        if _HAS_NUMPY:
+            rng = np.random.default_rng(seed)
+            def _uniform(lo, hi): return rng.uniform(lo, hi)
+        else:
+            import random; _r = random.Random(seed)
+            def _uniform(lo, hi): return _r.uniform(lo, hi)
         for dex in ("uniswap_v3", "sushiswap", "curve"):
-            rate = price * (1 + rng.uniform(-0.003, 0.003))
+            rate = price * (1 + _uniform(-0.003, 0.003))
             arb.add_edge("ETH", "USDC", rate,        dex)
             arb.add_edge("USDC", "ETH", 1.0 / rate,  dex)
 
@@ -467,15 +494,15 @@ class TradingAgent:
 
         # Periodic CMA-ES optimisation
         if self.cycle_count % 10 == 0 and len(hist) >= 20:
-            def _objective(params: np.ndarray) -> float:
+            def _objective(params) -> float:
                 w = max(2, int(round(params[0] * 20 + 5)))
                 t = max(0.001, params[1] * 0.02 + 0.01)
                 if len(hist) < w:
                     return 0.0
                 ma_inner = sum(hist[-w:]) / w
                 d  = (hist[-1] - ma_inner) / ma_inner
-                return -abs(d - t)   # maximise deviation from threshold
-            x0 = np.array([0.5, 0.5, 0.5])
+                return -abs(d - t)
+            x0 = [0.5, 0.5, 0.5] if not _HAS_NUMPY else np.array([0.5, 0.5, 0.5])
             result = cmaes.minimize(_objective, x0, n_generations=20)
             self._mr_window    = max(2, int(round(result.x_opt[0] * 20 + 5)))
             self._mr_threshold = max(0.001, result.x_opt[1] * 0.02 + 0.01)
@@ -488,8 +515,13 @@ class TradingAgent:
         chosen_dex = bandit.select()
 
         # Simulate flash loan execution: borrow × spread − premium
-        rng     = np.random.default_rng(int(time.time() * 1000) % (2**31))
-        spread  = rng.uniform(0.0005, 0.004)  # 0.05 % – 0.4 %
+        _seed2 = int(time.time() * 1000) % (2**31)
+        if _HAS_NUMPY:
+            _rng2  = np.random.default_rng(_seed2)
+            spread = _rng2.uniform(0.0005, 0.004)
+        else:
+            import random; spread = random.Random(_seed2).uniform(0.0005, 0.004)
+        # 0.05 % – 0.4 %
         premium = 0.0009                       # Aave 0.09 % fee
         size    = self.config.trade_size_eth
 
@@ -617,6 +649,7 @@ class TradingAgent:
             "total_pnl_usd":  round(self.total_pnl, 2),
             "roi_pct":        round(roi * 100, 4),
             "max_drawdown_pct": round(drawdown * 100, 4),
+            "regime":         self._regime,
             "last_result":    self._last_result,
             "chain_meta":     CHAIN_META.get(self.config.chain.value, {}),
         }
